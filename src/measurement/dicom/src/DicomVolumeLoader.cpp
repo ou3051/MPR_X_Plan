@@ -2,6 +2,10 @@
 
 #include <filesystem>
 
+#if MEASUREMENT_HAVE_DCMTK
+#include <dcmtk/dcmdata/dctk.h>
+#endif
+
 namespace measurement {
 
 Result<VolumeData> DicomVolumeLoader::loadFolder(const std::filesystem::path& folder) const
@@ -16,6 +20,9 @@ Result<VolumeData> DicomVolumeLoader::loadFolder(const std::filesystem::path& fo
     }
 
 #if MEASUREMENT_HAVE_DCMTK
+    DcmFileFormat format;
+    (void)format.getDataset();
+
     return Result<VolumeData>::failure({
         "DICOM_LOADER_NOT_IMPLEMENTED",
         "DCMTK is available, but the DICOM loader implementation is not complete yet.",

@@ -10,6 +10,8 @@
   - 配置：`cmake --preset vs2022-x64-debug`
   - 编译：`cmake --build --preset app-debug`
   - 测试：`ctest --preset debug`
+- 本地 DCMTK 开发包默认接入 `D:/lib/xray/DCMTK`；CMake 会优先匹配其中的 `dcmtk-*-build`，再匹配 `dcmtk-*-install`。
+- 仅有 `bin/*.dll` 和工具程序时视为 runtime，不启用编译链接。
 
 ## 2. 并行施工轨道
 

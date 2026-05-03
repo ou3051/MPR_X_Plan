@@ -19,7 +19,8 @@
         "MPR_USE_SYSTEM_DCMTK": "ON",
         "MPR_USE_SYSTEM_GTEST": "ON",
         "MPR_USE_SYSTEM_VTK": "ON",
-        "MPR_ENABLE_CUDA_DRR": "ON"
+        "MPR_ENABLE_CUDA_DRR": "ON",
+        "MPR_DCMTK_ROOT": "D:/lib/xray/DCMTK"
       }
     },
     {
