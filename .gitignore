@@ -1,0 +1,50 @@
+# Build outputs
+build/
+build-*/
+out/
+cmake-build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+install_manifest.txt
+
+# Qt generated files
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.qrc.depends
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+x64/
+x86/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+
+# Runtime artifacts
+*.log
+*.tmp
+*.bak
+
+# Medical data and local exports
+data/
+datasets/
+exports/
+screenshots/
+*.dcm
+*.dicom
+
+# OS files
+Thumbs.db
+Desktop.ini
