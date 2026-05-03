@@ -169,6 +169,8 @@ flowchart TB
 - `XrayViewAdapter`
 - `VtkPhysicsAdapter`
 
+MPR 核心实现采用 `vtkImageReslice + 外部控制器`。`vtkResliceCursor` 和 `vtkResliceCursorWidget` 不作为 v0.1 核心实现方案。
+
 ### 4.5 Algorithm Layer
 
 职责：
@@ -278,7 +280,8 @@ flowchart LR
 底层功能：
 
 - patient coordinate 到 slice plane 的转换。
-- VTK reslice。
+- 基于 `vtkImageReslice` 的确定性切面重采样。
+- 外部 `MprViewState` 和 `ViewSyncController` 控制十字线、切面位置和视图同步。
 - MPR overlay 绘制。
 - 屏幕点到患者坐标反算。
 - 器械截面 overlay。
@@ -379,7 +382,8 @@ flowchart LR
 
 底层功能：
 
-- JSON schema。
+- 单文件工程包。
+- 工程包 manifest JSON schema。
 - DICOM 引用路径和摘要。
 - instrument 参数序列化。
 - Xray 参数序列化。
@@ -478,6 +482,8 @@ VTK 中允许存在渲染 actor 变换：
 M_actor: physics/patient coordinate -> VTK world coordinate
 M_actor_inv: VTK world coordinate -> physics/patient coordinate
 ```
+
+v0.1 允许系统通过设置矩阵对 CT actor 进行非交互式移动。用户不直接拖拽 CT actor，但配准、测试或重定位流程可更新 `M_actor`。`VtkPhysicsAdapter` 必须始终读取当前 actor matrix，并将 VTK camera 转换回 patient/physics coordinate。
 
 DRR engine 接收的所有 X 射线参数必须已经转换到 physics/patient coordinate。
 
@@ -610,17 +616,28 @@ flowchart LR
 
 ## 12. 外部依赖概要
 
-初步依赖：
+已确认依赖：
 
 - Qt：桌面 UI、信号槽、线程、文件对话框。
 - VTK：MPR、3D 渲染、图像数据结构、相机和 actor。
-- DICOM 库：候选为 DCMTK、GDCM 或 VTK DICOM reader。
-- CUDA/OpenGL/VTK GPU 路径：候选用于实时 DRR。
+- DCMTK：DICOM 解析、tag 读取、像素数据装载和 DICOM 合规处理。
+- CUDA：实时 DRR 的 GPU 计算路径。
 - CMake/CTest：构建与测试。
 
 第三方依赖应进入 SOUP 清单，并记录版本、用途、风险和验证方式。
 
-## 13. 需求追踪概要
+## 13. 已确认技术决策
+
+| ID | 决策 | 概要影响 |
+| --- | --- | --- |
+| SAD-DEC-001 | DICOM 库选择 DCMTK。 | DICOM Import Module 基于 DCMTK 设计，VTK 只接收构建后的 `vtkImageData`。 |
+| SAD-DEC-002 | GPU DRR 选择 CUDA。 | `CudaDrrEngine` 以 CUDA kernel、3D texture 和异步 stream 为主线设计。 |
+| SAD-DEC-003 | 允许 CT actor 非交互式矩阵移动。 | `VtkPhysicsAdapter` 必须处理 `M_actor` 和 `M_actor_inv`，DRR 参数始终转换到 patient/physics。 |
+| SAD-DEC-004 | 工程保存为单文件工程包。 | Persistence Layer 输出包文件，包内以 manifest JSON 表达规划和引用。 |
+| SAD-DEC-005 | DRR 图像像素默认不加水印。 | 仿真标识放在 UI、文件名、manifest 或图像元数据中。 |
+| SAD-DEC-006 | MPR 核心采用 `vtkImageReslice + 外部控制`。 | MPR 状态由 domain/application 控制，便于单元测试和多视图同步验证。 |
+
+## 14. 需求追踪概要
 
 | 模块 | 主要需求 |
 | --- | --- |
@@ -633,7 +650,7 @@ flowchart LR
 | Verification | NFR-TEST-001 到 NFR-TEST-003 |
 | Traceability | NFR-TRACE-001 到 NFR-TRACE-003 |
 
-## 14. 设计风险
+## 15. 设计风险
 
 | ID | 风险 | 设计控制 |
 | --- | --- | --- |
@@ -642,8 +659,9 @@ flowchart LR
 | SAD-RISK-003 | GPU DRR 输出难以验证 | 保留 CPU reference，并建立 phantom 对照 |
 | SAD-RISK-004 | 实时渲染阻塞 UI | DRR 异步渲染，旧帧丢弃，UI 主线程不做重计算 |
 | SAD-RISK-005 | 工程文件未来不兼容 | schema version 和迁移策略 |
+| SAD-RISK-006 | `vtkResliceCursorWidget` 内部状态与 domain 状态分叉 | v0.1 不采用 cursor widget 作为核心方案，MPR 由外部状态驱动 |
 
-## 15. 版本记录
+## 16. 版本记录
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |

@@ -84,6 +84,13 @@ measurement_unit_tests
 measurement_validation_tests
 ```
 
+确认技术选型：
+
+- DICOM 解析库：DCMTK。
+- 实时 GPU DRR：CUDA。
+- MPR 核心：`vtkImageReslice + 外部控制器`。
+- 工程文件：单文件工程包，包内包含 manifest JSON。
+
 依赖方向：
 
 ```text
@@ -272,6 +279,8 @@ struct XrayView {
 
 ## 4. DICOM 导入详细设计
 
+v0.1 DICOM 导入模块基于 DCMTK 实现。DCMTK 负责 DICOM 文件识别、tag 读取、CT 序列校验、像素数据读取和 rescale 信息提取。VTK 不作为 DICOM 解析库，只接收导入模块构建完成后的 `vtkImageData`。
+
 ### 4.1 类接口
 
 ```cpp
@@ -385,7 +394,9 @@ M_actor_inv: VTK world -> patient/physics
 
 - domain 不保存 `M_actor`。
 - 如果用户只旋转相机，`M_actor` 保持 identity。
-- 如果未来允许移动 CT actor，`VtkPhysicsAdapter` 必须用 `M_actor_inv` 将 camera 转回 patient/physics。
+- v0.1 允许系统通过设置矩阵非交互式移动 CT actor，常见来源包括配准预留、测试姿态或工程加载后的重定位。
+- 用户不直接拖拽 CT actor；任何 CT actor 矩阵变化必须通过受控接口进入。
+- `VtkPhysicsAdapter` 必须用 `M_actor_inv` 将 camera 转回 patient/physics。
 - DRR engine 永远只接收 patient/physics coordinate。
 
 ### 5.3 详细测试点
@@ -398,7 +409,21 @@ M_actor_inv: VTK world -> patient/physics
 
 ## 6. MPR 详细设计
 
-### 6.1 类接口
+### 6.1 实现方案选择
+
+MPR 核心采用 `vtkImageReslice + 外部控制器`，不采用 `vtkResliceCursor + vtkResliceCursorWidget` 作为 v0.1 核心方案。
+
+选择理由：
+
+- `vtkImageReslice` 可以由 `MprViewState` 完全外部驱动，符合 domain model 作为单一事实来源的原则。
+- 三视图十字线、切面位置、窗宽窗位、器械 overlay 均可由 application/controller 明确控制和测试。
+- `vtkResliceCursorWidget` 内部维护交互状态，容易让 VTK widget 状态和 domain 状态出现双源状态。
+- 审批级软件需要可验证的坐标转换和切面同步，外部控制更容易写单元测试和功能测试。
+- 后续如需任意斜切，可在现有 reslice plane 模型上扩展，而不是重写状态同步体系。
+
+`vtkResliceCursorWidget` 可作为调研、原型或未来斜切交互参考，但不得成为核心规划状态来源。
+
+### 6.2 类接口
 
 ```cpp
 enum class MprPlane {
@@ -424,7 +449,22 @@ public:
 };
 ```
 
-### 6.2 MPR 切面定义
+### 6.3 vtkImageReslice 搭建逻辑
+
+每个 MPR 视图拥有独立的 `vtkImageReslice`，但共享同一份 `VolumeData` 和全局 `crosshairPatientMm`。
+
+```text
+1. MprViewAdapter 接收 VolumeData。
+2. 为 Axial/Sagittal/Coronal 各创建一个 vtkImageReslice。
+3. 根据 MprViewState 构建 reslice axes。
+4. vtkImageReslice 从 vtkImageData 中重采样输出 2D slice。
+5. 输出 slice 进入 vtkImageMapToWindowLevelColors。
+6. 2D renderer 绘制切片、十字线、器械 overlay 和标尺。
+```
+
+`vtkImageReslice` 只负责采样，不拥有十字线、切面选择和器械状态。
+
+### 6.4 MPR 切面定义
 
 Axial：
 
@@ -452,7 +492,7 @@ v = sliceDirectionPatient
 
 具体方向可根据医学显示习惯进行翻转，但翻转必须在显示层处理，不改变 domain 坐标。
 
-### 6.3 交互流程
+### 6.5 交互流程
 
 滚轮切片：
 
@@ -474,7 +514,7 @@ v = sliceDirectionPatient
 4. 所有视图刷新。
 ```
 
-### 6.4 器械 overlay
+### 6.6 器械 overlay
 
 MPR 上显示器械的方法：
 
@@ -486,7 +526,7 @@ MPR 上显示器械的方法：
 5. 选中器械时显示 entry、endpoint 和中心线。
 ```
 
-### 6.5 测试点
+### 6.7 测试点
 
 - FR-MPR-001：三正交切面方向正确。
 - FR-MPR-002：十字线同步。
@@ -656,7 +696,7 @@ public:
 
 - X 射线几何用 `ProjectionParams` 表达。
 - DRR 基于 Beer-Lambert 线积分。
-- CPU reference 与 GPU realtime 共享同一几何模型。
+- CPU reference 与 CUDA realtime 共享同一几何模型。
 - VTK camera 与物理仿真之间通过 `VtkPhysicsAdapter` 进行坐标同步。
 - CT 在 physics/patient coordinate 中视为静止体数据。
 
@@ -707,7 +747,7 @@ public:
     Result<DrrImage> render(const ProjectionParams& params, const DrrRenderSettings& settings) override;
 };
 
-class GpuDrrEngine final : public IDrrEngine {
+class CudaDrrEngine final : public IDrrEngine {
 public:
     Result<void> setVolume(const VolumeData& volume) override;
     Result<DrrImage> render(const ProjectionParams& params, const DrrRenderSettings& settings) override;
@@ -790,9 +830,9 @@ public:
 
 CPU 实现必须确定性，不使用随机噪声。
 
-### 9.6 GPU DRR 搭建逻辑
+### 9.6 CUDA DRR 搭建逻辑
 
-GPU 初始化：
+CUDA 初始化：
 
 ```text
 1. setVolume 时上传 volume 到 3D texture。
@@ -806,7 +846,7 @@ GPU 初始化：
 ```text
 1. 上传 ProjectionParams。
 2. 启动 drr_raycasting kernel。
-3. 启动 postprocess kernel。
+3. 启动 postprocess_lut kernel。
 4. 异步拷贝 display image 或映射到 VTK/Qt texture。
 5. 回调 XrayViewAdapter。
 ```
@@ -870,7 +910,7 @@ private:
 `buildProjectionParams()`：
 
 ```text
-1. 读取 vtkVolume::GetMatrix() 得到 M_actor。
+1. 读取 vtkVolume::GetMatrix() 得到 M_actor。即使用户不直接拖动 CT actor，系统也允许通过受控接口设置该矩阵。
 2. 求 M_actor_inv。
 3. 读取 camera position、focal point、viewUp，位于 VTK world。
 4. 用 M_actor_inv 转成 patient/physics coordinate。
@@ -1018,7 +1058,19 @@ private:
 
 ### 11.1 工程文件格式
 
-v0.1 使用 JSON：
+v0.1 使用单文件工程包，建议扩展名为 `.mprproj`。工程包内部必须包含 manifest JSON；manifest 是工程数据的主入口。
+
+建议包结构：
+
+```text
+project.mprproj
+  manifest.json
+  thumbnails/
+  exports/
+  cache/
+```
+
+`manifest.json` 示例：
 
 ```json
 {
@@ -1039,27 +1091,31 @@ v0.1 使用 JSON：
 }
 ```
 
+v0.1 默认不把原始 DICOM 数据复制进工程包，只保存 DICOM 引用路径、series 标识和数据摘要。若后续需要离线携带数据，应作为独立受控需求处理。
+
 ### 11.2 保存逻辑
 
 ```text
 1. ProjectController 收集 Case。
-2. ProjectSerializer 将 domain model 转 JSON。
-3. 写入临时文件。
-4. flush 成功后原子替换目标文件。
-5. 返回保存结果。
+2. ProjectSerializer 将 domain model 转 manifest JSON。
+3. PackageWriter 创建临时工程包。
+4. 写入 manifest JSON、缩略图、必要缓存和导出引用。
+5. flush 成功后原子替换目标工程包。
+6. 返回保存结果。
 ```
 
 ### 11.3 加载逻辑
 
 ```text
-1. 读取 JSON。
-2. 校验 schemaVersion。
-3. 校验 DICOM 引用路径。
-4. 重新加载 DICOM volume。
-5. 反序列化 instruments、xrayViews、viewState。
-6. 校验所有 instrument 参数。
-7. 更新 Case。
-8. 刷新 MPR/3D/Xray。
+1. 打开工程包。
+2. 读取 manifest JSON。
+3. 校验 schemaVersion。
+4. 校验 DICOM 引用路径和数据摘要。
+5. 重新加载 DICOM volume。
+6. 反序列化 instruments、xrayViews、viewState。
+7. 校验所有 instrument 参数。
+8. 更新 Case。
+9. 刷新 MPR/3D/Xray。
 ```
 
 ### 11.4 测试点
@@ -1196,16 +1252,25 @@ tests/data/
 | 第 11 章 工程保存 | FR-PROJ-001 到 FR-PROJ-005 |
 | 第 14 章 测试 | NFR-TEST-001 到 NFR-TEST-003 |
 
-## 16. 待确认设计问题
+## 16. 已确认设计决策
 
-- DICOM 库最终选择 DCMTK、GDCM 还是 VTK reader。
-- GPU DRR 技术路线最终选择 CUDA、OpenGL shader 还是 VTK GPU volume ray cast 扩展。
-- 是否允许用户移动 CT actor。若不允许，v0.1 可简化 VtkPhysicsAdapter，但仍保留矩阵处理能力。
+| ID | 决策 | 详细设计影响 |
+| --- | --- | --- |
+| D-DEC-001 | DICOM 库选择 DCMTK。 | `DicomVolumeLoader` 基于 DCMTK 实现 tag 读取、像素装载、序列校验和错误诊断。 |
+| D-DEC-002 | GPU DRR 技术路线选择 CUDA。 | `CudaDrrEngine` 使用 CUDA 3D texture、kernel 和 async stream；CPU DRR 保留为 reference。 |
+| D-DEC-003 | 允许 CT actor 通过矩阵进行非交互式移动。 | `VtkPhysicsAdapter` 必须每次从 vtkVolume 读取 `M_actor`，用 `M_actor_inv` 将 camera 转换到 patient/physics。 |
+| D-DEC-004 | Project JSON 打包成单文件工程包。 | `ProjectSerializer` 负责 manifest JSON，`PackageWriter/PackageReader` 负责包读写和原子替换。 |
+| D-DEC-005 | DRR 输出默认不加入水印。 | `XrayViewAdapter` 和导出 metadata 标识仿真属性，不修改 DRR 像素。 |
+| D-DEC-006 | MPR 核心采用 `vtkImageReslice + 外部控制器`。 | `MprViewState` 是 MPR 状态来源，`vtkImageReslice` 只作为采样执行器，不使用 `vtkResliceCursorWidget` 承载核心状态。 |
+
+## 17. 待确认设计问题
+
 - AP/LAT 的 patient axis 符号需要用 phantom 和医生习惯共同确认。
-- Project JSON 是否需要打包成单文件工程包。
-- DRR 输出是否默认加入“模拟 X 光”水印。
+- 目标 GPU 最低型号、显存和 CUDA runtime 版本。
+- 单文件工程包是否需要加密、签名或完整性校验。
+- v0.1 是否需要报告导出。
 
-## 17. 版本记录
+## 18. 版本记录
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
