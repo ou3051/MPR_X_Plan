@@ -53,9 +53,6 @@ src/
     vtk_adapter/
       include/measurement/vtk/
       src/
-    qt_adapter/
-      include/measurement/qt/
-      src/
     persistence/
       include/measurement/persistence/
       src/
@@ -65,6 +62,8 @@ tests/
   validation/
 docs/
 ```
+
+说明：v0.1 实际源码结构不单独建立 `measurement_qt_adapter` 模块。Qt 相关控制器、面板和 widget 暂放在 `src/app/`，只作为应用层入口；若后续出现可复用的 Qt 适配逻辑，再以变更评审方式拆分为独立 `measurement_qt_adapter` target。
 
 ### 2.2 构建目标
 
@@ -78,7 +77,6 @@ measurement_planning
 measurement_drr
 measurement_vtk_adapter
 measurement_persistence
-measurement_qt_adapter
 measurement_app
 measurement_unit_tests
 measurement_validation_tests
@@ -89,7 +87,7 @@ measurement_validation_tests
 - DICOM 解析库：DCMTK。
 - 实时 GPU DRR：CUDA。
 - MPR 核心：`vtkImageReslice + 外部控制器`。
-- 工程文件：单文件工程包，包内包含 manifest JSON。
+- 工程包：单文件 `.mprproj`，包内包含 manifest JSON。
 
 依赖方向：
 
@@ -99,8 +97,8 @@ core <- mpr
 core <- planning
 core <- drr
 core + planning + mpr + drr <- vtk_adapter
-core + planning + persistence <- qt_adapter
-all adapters <- app
+core + planning + persistence <- app UI/controllers
+vtk_adapter + app UI/controllers <- app
 ```
 
 ## 3. Core Domain 详细设计
@@ -1056,7 +1054,7 @@ private:
 
 ## 11. 工程保存详细设计
 
-### 11.1 工程文件格式
+### 11.1 工程包格式
 
 v0.1 使用单文件工程包，建议扩展名为 `.mprproj`。工程包内部必须包含 manifest JSON；manifest 是工程数据的主入口。
 
@@ -1265,13 +1263,11 @@ tests/data/
 
 ## 17. 待确认设计问题
 
-- AP/LAT 的 patient axis 符号需要用 phantom 和医生习惯共同确认。
-- 目标 GPU 最低型号、显存和 CUDA runtime 版本。
-- 单文件工程包是否需要加密、签名或完整性校验。
-- v0.1 是否需要报告导出。
+待确认设计问题统一进入 `docs/OpenIssues_v0.1.md`，每一项必须包含负责人、关闭标准和状态。本文档不再维护无负责人 bullet list。
 
 ## 18. 版本记录
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
 | v0.1 | 2026-05-03 | 建立 DICOM、坐标、MPR、3D、器械、DRR、工程保存和测试框架详细设计基线。 |
+| v0.1-review-fix | 2026-05-03 | 澄清 v0.1 不设独立 `measurement_qt_adapter` target，并把待确认问题迁移到集中追踪表。 |

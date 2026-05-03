@@ -52,6 +52,6 @@ if ($Dependency -eq "dcmtk" -or $Dependency -eq "all") {
     Clone-PinnedRepo `
         -Name "dcmtk" `
         -Url "https://github.com/DCMTK/dcmtk.git" `
-        -Tag "DCMTK-3.6.8" `
-        -ExpectedCommit "139972c69896afdbcc5e58828e017b3b9c26cbf3"
+        -Tag "DCMTK-3.7.0" `
+        -ExpectedCommit "ccfd10b84ff3c9a40b7b331698aedf06d421fc43"
 }

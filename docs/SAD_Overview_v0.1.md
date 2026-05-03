@@ -58,7 +58,7 @@ Qt screen coordinate 和 VTK world coordinate 只存在于交互层和渲染适�
 DRR 采用双实现：
 
 - `CpuDrrEngine`：确定性参考实现，用于算法验证、单元测试和 GPU 对照。
-- `GpuDrrEngine`：实时交互实现，用于 X 射线仿真视图。
+- `CudaDrrEngine`：实时交互实现，用于 X 射线仿真视图。
 
 两者使用相同输入模型：
 
@@ -112,6 +112,8 @@ flowchart TB
 - 不保存业务状态。
 - 不直接改写 VTK actor 作为规划结果。
 - 不执行 DICOM、DRR 或几何算法。
+
+v0.1 不设置独立 `measurement_qt_adapter` target。Qt UI、面板和应用控制器属于 `src/app/` 应用层；跨 UI 的 VTK/坐标适配统一放在 `measurement_vtk_adapter`。
 
 ### 4.2 Application Layer
 
@@ -189,7 +191,7 @@ MPR 核心实现采用 `vtkImageReslice + 外部控制器`。`vtkResliceCursor` 
 
 职责：
 
-- 保存和加载规划工程文件。
+- 保存和加载规划工程包。
 - 保存软件版本、schema 版本和 DICOM 引用。
 - 导出模拟 X 光、MPR 和 3D 截图。
 - 预留审计日志与报告导出能力。
@@ -519,7 +521,7 @@ class CoordinateTransformer;
 class MprResliceEngine;
 class InstrumentGeometryBuilder;
 class CpuDrrEngine;
-class GpuDrrEngine;
+class CudaDrrEngine;
 class InstrumentProjector;
 ```
 
@@ -563,7 +565,7 @@ Qt 主线程负责：
 - DICOM 文件夹扫描和读取。
 - CPU DRR 渲染。
 - 高质量图像导出。
-- 工程文件保存加载。
+- 工程包保存加载。
 
 ### 9.3 GPU 异步
 
@@ -658,7 +660,7 @@ flowchart LR
 | SAD-RISK-002 | VTK actor 状态污染业务数据 | 禁止 actor 作为业务状态来源，使用 adapter 单向映射 |
 | SAD-RISK-003 | GPU DRR 输出难以验证 | 保留 CPU reference，并建立 phantom 对照 |
 | SAD-RISK-004 | 实时渲染阻塞 UI | DRR 异步渲染，旧帧丢弃，UI 主线程不做重计算 |
-| SAD-RISK-005 | 工程文件未来不兼容 | schema version 和迁移策略 |
+| SAD-RISK-005 | 工程包未来不兼容 | schema version 和迁移策略 |
 | SAD-RISK-006 | `vtkResliceCursorWidget` 内部状态与 domain 状态分叉 | v0.1 不采用 cursor widget 作为核心方案，MPR 由外部状态驱动 |
 
 ## 16. 版本记录
