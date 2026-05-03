@@ -45,6 +45,11 @@ screenshots/
 *.dcm
 *.dicom
 
+# Explicitly fetched dependencies live here but are not committed wholesale.
+third_party/*
+!third_party/README.md
+!third_party/.gitkeep
+
 # OS files
 Thumbs.db
 Desktop.ini

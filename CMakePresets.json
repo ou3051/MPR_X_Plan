@@ -1,0 +1,85 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 26,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2022-x64-base",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "MPR_BUILD_APP": "ON",
+        "MPR_BUILD_TESTS": "ON",
+        "MPR_USE_SYSTEM_DCMTK": "ON",
+        "MPR_USE_SYSTEM_GTEST": "ON",
+        "MPR_USE_SYSTEM_VTK": "ON",
+        "MPR_ENABLE_CUDA_DRR": "ON"
+      }
+    },
+    {
+      "name": "vs2022-x64-debug",
+      "inherits": "vs2022-x64-base",
+      "displayName": "VS2022 x64 Debug",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo"
+      }
+    },
+    {
+      "name": "vs2022-x64-release",
+      "inherits": "vs2022-x64-base",
+      "displayName": "VS2022 x64 Release",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release"
+      }
+    },
+    {
+      "name": "vs2022-x64-relwithdebinfo",
+      "inherits": "vs2022-x64-base",
+      "displayName": "VS2022 x64 RelWithDebInfo",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "app-debug",
+      "configurePreset": "vs2022-x64-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "app-release",
+      "configurePreset": "vs2022-x64-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "app-relwithdebinfo",
+      "configurePreset": "vs2022-x64-relwithdebinfo",
+      "configuration": "RelWithDebInfo"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "vs2022-x64-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "vs2022-x64-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
