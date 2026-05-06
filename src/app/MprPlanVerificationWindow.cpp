@@ -5,6 +5,7 @@
 #include "measurement/dicom/DicomVolumeLoader.h"
 #include "measurement/drr/CpuDrrEngine.h"
 #include "measurement/drr/CudaDrrEngine.h"
+#include "measurement/core/MeasurementVisibility.h"
 #include "measurement/persistence/ProjectManifest.h"
 
 #include <QApplication>
@@ -16,6 +17,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -28,6 +30,7 @@
 #include <QPen>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSlider>
 #include <QSplitter>
 #include <QStatusBar>
@@ -119,6 +122,37 @@ constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_
         return "Coronal";
     }
     return "MPR";
+}
+
+[[nodiscard]] measurement::MeasurementViewType measurementViewTypeForPlane(measurement::MprPlane plane)
+{
+    switch (plane) {
+    case measurement::MprPlane::Axial:
+        return measurement::MeasurementViewType::Axial;
+    case measurement::MprPlane::Sagittal:
+        return measurement::MeasurementViewType::Sagittal;
+    case measurement::MprPlane::Coronal:
+        return measurement::MeasurementViewType::Coronal;
+    }
+    return measurement::MeasurementViewType::Oblique;
+}
+
+[[nodiscard]] const char* measurementModeName(measurement::MeasurementMode mode)
+{
+    switch (mode) {
+    case measurement::MeasurementMode::Navigate:
+        return "Navigate";
+    case measurement::MeasurementMode::Distance:
+        return "Distance";
+    case measurement::MeasurementMode::Angle:
+        return "Angle";
+    }
+    return "Navigate";
+}
+
+[[nodiscard]] const char* measurementTypeName(measurement::MeasurementType type)
+{
+    return type == measurement::MeasurementType::Angle ? "Angle" : "Distance";
 }
 
 [[nodiscard]] double clampDouble(double value, double minValue, double maxValue)
@@ -678,6 +712,42 @@ void MprSliceWidget::setActivatedCallback(std::function<void(measurement::MprPla
     m_activated = std::move(callback);
 }
 
+void MprSliceWidget::setMeasurements(const std::vector<measurement::MeasurementAnnotation>* measurements)
+{
+    m_measurements = measurements;
+    update();
+}
+
+void MprSliceWidget::setMeasurementInteractionState(
+    measurement::MeasurementMode mode,
+    std::vector<measurement::Vec3d> pendingPoints,
+    std::optional<measurement::Vec3d> hoverPoint,
+    measurement::MeasurementId selectedId)
+{
+    m_measurementMode = mode;
+    m_pendingMeasurementPoints = std::move(pendingPoints);
+    m_measurementHoverPatientMm = hoverPoint;
+    m_selectedMeasurementId = selectedId;
+    update();
+}
+
+void MprSliceWidget::setMeasurementPointAddedCallback(
+    std::function<void(measurement::MprPlane, measurement::Vec3d, measurement::MeasurementPlane)> callback)
+{
+    m_measurementPointAdded = std::move(callback);
+}
+
+void MprSliceWidget::setMeasurementHoverChangedCallback(
+    std::function<void(measurement::MprPlane, std::optional<measurement::Vec3d>)> callback)
+{
+    m_measurementHoverChanged = std::move(callback);
+}
+
+void MprSliceWidget::setMeasurementCancelCallback(std::function<void()> callback)
+{
+    m_measurementCancelRequested = std::move(callback);
+}
+
 void MprSliceWidget::resetViewPresentation()
 {
     m_pan = {};
@@ -1193,6 +1263,31 @@ measurement::Vec3d MprSliceWidget::imagePointToPatient(QPointF imagePoint) const
     return frame.originPatientMm + frame.horizontalPatientUnit * u + frame.verticalPatientUnit * v;
 }
 
+std::optional<measurement::MeasurementPlane> MprSliceWidget::currentMeasurementPlane() const
+{
+    const auto params = parameters();
+    if (!params.ok()) {
+        return std::nullopt;
+    }
+
+    const measurement::MprSliceFrame& frame = params.value().frame;
+    const measurement::MprSliceRequest& request = params.value().request;
+    return measurement::MeasurementPlane{
+        frame.normalPatientUnit,
+        frame.originPatientMm,
+        std::max(request.pixelSpacingMm, 0.25),
+    };
+}
+
+std::optional<measurement::Vec3d> MprSliceWidget::patientPointFromWidgetPosition(const QPoint& position) const
+{
+    if (m_image.isNull() || m_state == nullptr || m_volume == nullptr || !imageRect().contains(position)) {
+        return std::nullopt;
+    }
+
+    return imagePointToPatient(widgetPointToImagePoint(position));
+}
+
 void MprSliceWidget::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
@@ -1226,6 +1321,7 @@ void MprSliceWidget::paintEvent(QPaintEvent*)
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(crosshair, 4.0, 4.0);
         drawInstrumentOverlays(painter);
+        drawMeasurementOverlays(painter);
     }
     painter.restore();
 
@@ -1249,6 +1345,125 @@ void MprSliceWidget::drawInstrumentOverlays(QPainter& painter)
     }
 }
 
+void MprSliceWidget::drawMeasurementOverlays(QPainter& painter)
+{
+    const auto slice = currentMeasurementPlane();
+    if (!slice.has_value()) {
+        return;
+    }
+
+    if (m_measurements != nullptr) {
+        for (const measurement::MeasurementAnnotation& annotation : *m_measurements) {
+            const measurement::MeasurementVisibilityResult result = measurement::measurement_visibility::evaluate(
+                annotation,
+                *slice,
+                measurementViewTypeForPlane(m_plane));
+            if (result.level != measurement::MeasurementVisibilityLevel::Hidden) {
+                drawMeasurementAnnotation(painter, result);
+            }
+        }
+    }
+
+    drawMeasurementPreview(painter);
+}
+
+void MprSliceWidget::drawMeasurementAnnotation(QPainter& painter, const measurement::MeasurementVisibilityResult& result)
+{
+    const QColor base = result.selected ? QColor(255, 224, 96, 245) : QColor(120, 235, 190, 230);
+    const QColor textColor = result.selected ? QColor(255, 247, 204) : QColor(218, 255, 244);
+    QPen pen(base, result.selected ? 2.5 : 1.8);
+    pen.setCosmetic(true);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    const std::vector<measurement::Vec3d>* points = &result.fullWorldPointsPatientMm;
+    if (result.level == measurement::MeasurementVisibilityLevel::SectionIndicator) {
+        points = &result.sectionWorldPointsPatientMm;
+        QPen sectionPen(QColor(255, 160, 80, 220), 1.6, Qt::DashLine);
+        sectionPen.setCosmetic(true);
+        painter.setPen(sectionPen);
+    }
+
+    std::vector<QPointF> imagePoints;
+    imagePoints.reserve(points->size());
+    for (measurement::Vec3d point : *points) {
+        imagePoints.push_back(patientToImagePoint(point));
+    }
+
+    if (result.type == measurement::MeasurementType::Distance && imagePoints.size() >= 2) {
+        painter.drawLine(imagePoints[0], imagePoints[1]);
+    } else if (result.type == measurement::MeasurementType::Angle && imagePoints.size() >= 4) {
+        painter.drawLine(imagePoints[0], imagePoints[1]);
+        painter.drawLine(imagePoints[2], imagePoints[3]);
+    } else if (imagePoints.size() >= 2) {
+        for (size_t index = 1; index < imagePoints.size(); ++index) {
+            painter.drawLine(imagePoints[index - 1], imagePoints[index]);
+        }
+    }
+
+    painter.setBrush(QColor(18, 20, 24, 190));
+    for (QPointF point : imagePoints) {
+        painter.drawEllipse(point, 3.2, 3.2);
+    }
+
+    if (!result.displayText.empty() && !imagePoints.empty()) {
+        QPointF labelPoint = imagePoints.front();
+        for (QPointF point : imagePoints) {
+            labelPoint += point;
+        }
+        labelPoint /= static_cast<double>(imagePoints.size());
+        labelPoint += QPointF(6.0, -6.0);
+
+        const QString text = QString::fromStdString(result.displayText);
+        const QFontMetrics metrics(painter.font());
+        QRectF textRect(metrics.boundingRect(text));
+        textRect.adjust(-4.0, -2.0, 4.0, 2.0);
+        textRect.translate(labelPoint);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(18, 20, 24, 205));
+        painter.drawRoundedRect(textRect, 3.0, 3.0);
+        painter.setPen(textColor);
+        painter.drawText(textRect, Qt::AlignCenter, text);
+    }
+}
+
+void MprSliceWidget::drawMeasurementPreview(QPainter& painter)
+{
+    if (m_measurementMode == measurement::MeasurementMode::Navigate || m_pendingMeasurementPoints.empty()) {
+        return;
+    }
+
+    std::vector<measurement::Vec3d> previewPoints = m_pendingMeasurementPoints;
+    if (m_measurementHoverPatientMm.has_value()) {
+        previewPoints.push_back(*m_measurementHoverPatientMm);
+    }
+    if (previewPoints.size() < 2) {
+        return;
+    }
+
+    std::vector<QPointF> imagePoints;
+    imagePoints.reserve(previewPoints.size());
+    for (measurement::Vec3d point : previewPoints) {
+        imagePoints.push_back(patientToImagePoint(point));
+    }
+
+    QPen pen(QColor(255, 220, 120, 230), 1.5, Qt::DashLine);
+    pen.setCosmetic(true);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    if (m_measurementMode == measurement::MeasurementMode::Angle && imagePoints.size() >= 3) {
+        painter.drawLine(imagePoints[0], imagePoints[1]);
+        painter.drawLine(imagePoints[2], imagePoints.back());
+    } else {
+        painter.drawLine(imagePoints.front(), imagePoints.back());
+    }
+
+    painter.setBrush(QColor(255, 220, 120, 210));
+    for (QPointF point : imagePoints) {
+        painter.drawEllipse(point, 2.5, 2.5);
+    }
+}
+
 void MprSliceWidget::mousePressEvent(QMouseEvent* event)
 {
     if (m_activated) {
@@ -1267,6 +1482,16 @@ void MprSliceWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::LeftButton) {
+        if (m_measurementMode != measurement::MeasurementMode::Navigate && m_measurementPointAdded) {
+            const auto patientPoint = patientPointFromWidgetPosition(event->pos());
+            const auto slicePlane = currentMeasurementPlane();
+            if (patientPoint.has_value() && slicePlane.has_value()) {
+                m_measurementPointAdded(m_plane, *patientPoint, *slicePlane);
+                event->accept();
+                return;
+            }
+        }
+
         const InteractionTarget target = hitTestCrosshair(event->pos());
         if (target == InteractionTarget::Center) {
             beginCrosshairDrag(target, event->pos());
@@ -1295,6 +1520,13 @@ void MprSliceWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
+        if (m_measurementMode != measurement::MeasurementMode::Navigate
+            && !m_pendingMeasurementPoints.empty()
+            && m_measurementCancelRequested) {
+            m_measurementCancelRequested();
+            event->accept();
+            return;
+        }
         beginZoomDrag(event->pos());
         event->accept();
         return;
@@ -1332,6 +1564,9 @@ void MprSliceWidget::mouseMoveEvent(QMouseEvent* event)
     }
 
     m_lastMousePosition = event->pos();
+    if (m_measurementMode != measurement::MeasurementMode::Navigate && m_measurementHoverChanged) {
+        m_measurementHoverChanged(m_plane, patientPointFromWidgetPosition(event->pos()));
+    }
     updateCursorForHover(event->pos());
     event->ignore();
 }
@@ -3157,28 +3392,46 @@ void MprPlanVerificationWindow::buildUi()
     controls->setContentsMargins(8, 8, 8, 8);
     controls->setSpacing(8);
 
-    auto* loadGrid = new QGridLayout();
+    auto* drrPanel = new QWidget(splitter);
+    drrPanel->setObjectName("DrrPanel");
+    drrPanel->setAttribute(Qt::WA_StyledBackground, true);
+    auto* drrOuterLayout = new QVBoxLayout(drrPanel);
+    drrOuterLayout->setContentsMargins(8, 8, 8, 8);
+    drrOuterLayout->setSpacing(0);
+    auto* drrScrollArea = new QScrollArea(drrPanel);
+    drrScrollArea->setWidgetResizable(true);
+    drrScrollArea->setFrameShape(QFrame::NoFrame);
+    auto* drrContent = new QWidget(drrScrollArea);
+    auto* drrPanelLayout = new QVBoxLayout(drrContent);
+    drrPanelLayout->setContentsMargins(0, 0, 0, 0);
+    drrPanelLayout->setSpacing(8);
+    drrScrollArea->setWidget(drrContent);
+    drrOuterLayout->addWidget(drrScrollArea);
+
+    auto* workflowGroup = new QGroupBox("Workflow", drrContent);
+    auto* loadGrid = new QGridLayout(workflowGroup);
     loadGrid->setHorizontalSpacing(8);
     loadGrid->setVerticalSpacing(8);
-    m_loadDicomButton = new QPushButton("Load DICOM", controlPanel);
-    auto* resetViewsButton = new QPushButton("Reset Views", controlPanel);
-    auto* saveButton = new QPushButton("Save .mprproj", controlPanel);
-    m_freeObliqueButton = new QPushButton("Free oblique: Off", controlPanel);
+    m_loadDicomButton = new QPushButton("Load DICOM", workflowGroup);
+    auto* resetViewsButton = new QPushButton("Reset Views", workflowGroup);
+    auto* saveButton = new QPushButton("Save .mprproj", workflowGroup);
+    m_freeObliqueButton = new QPushButton("Free oblique: Off", workflowGroup);
     m_freeObliqueButton->setCheckable(true);
-    // Keep the command buttons compact so the right-side control columns can stay
-    // near one third of the window without forcing the image panels to shrink.
     loadGrid->addWidget(m_loadDicomButton, 0, 0, 1, 2);
     loadGrid->addWidget(resetViewsButton, 1, 0);
     loadGrid->addWidget(saveButton, 1, 1);
     loadGrid->addWidget(m_freeObliqueButton, 2, 0, 1, 2);
-    controls->addLayout(loadGrid);
+    drrPanelLayout->addWidget(workflowGroup);
 
-    m_volumeLabel = new QLabel(controlPanel);
+    auto* volumeGroup = new QGroupBox("Volume", drrContent);
+    auto* volumeLayout = new QVBoxLayout(volumeGroup);
+    m_volumeLabel = new QLabel(volumeGroup);
     m_volumeLabel->setObjectName("VolumeInfoLabel");
     m_volumeLabel->setWordWrap(true);
-    controls->addWidget(m_volumeLabel);
+    volumeLayout->addWidget(m_volumeLabel);
+    drrPanelLayout->addWidget(volumeGroup);
 
-    auto* postureGroup = new QGroupBox("Patient position", controlPanel);
+    auto* postureGroup = new QGroupBox("Patient position", drrContent);
     auto* postureLayout = new QFormLayout(postureGroup);
     m_patientPostureCombo = new QComboBox(postureGroup);
     m_patientPostureCombo->addItem("Supine", false);
@@ -3188,9 +3441,9 @@ void MprPlanVerificationWindow::buildUi()
     m_headFeetDirectionCombo->addItem("Feet first", true);
     postureLayout->addRow("Body posture", m_patientPostureCombo);
     postureLayout->addRow("Entry direction", m_headFeetDirectionCombo);
-    controls->addWidget(postureGroup);
+    drrPanelLayout->addWidget(postureGroup);
 
-    auto* crosshairGroup = new QGroupBox("Crosshair voxel", controlPanel);
+    auto* crosshairGroup = new QGroupBox("Crosshair voxel", drrContent);
     auto* crosshairLayout = new QGridLayout(crosshairGroup);
     m_xSlider = new QSlider(Qt::Horizontal, crosshairGroup);
     m_ySlider = new QSlider(Qt::Horizontal, crosshairGroup);
@@ -3207,15 +3460,50 @@ void MprPlanVerificationWindow::buildUi()
     crosshairLayout->addWidget(new QLabel("Z", crosshairGroup), 2, 0);
     crosshairLayout->addWidget(m_zSlider, 2, 1);
     crosshairLayout->addWidget(m_zValueLabel, 2, 2);
-    controls->addWidget(crosshairGroup);
-    // Keep the controls wired for programmatic slice changes, but free the
-    // right panel height for the instrument planning list.
+    drrPanelLayout->addWidget(crosshairGroup);
+    // Kept wired for programmatic slice changes. Hidden for now because the
+    // MPR views provide direct crosshair manipulation.
     crosshairGroup->setVisible(false);
+
+    auto* planningSplitter = new QSplitter(Qt::Vertical, controlPanel);
+    planningSplitter->setChildrenCollapsible(false);
+    controls->addWidget(planningSplitter, 1);
+
+    auto* measurementGroup = new QGroupBox("Measurements", controlPanel);
+    auto* measurementLayout = new QVBoxLayout(measurementGroup);
+    auto* measurementButtons = new QGridLayout();
+    measurementButtons->setHorizontalSpacing(8);
+    measurementButtons->setVerticalSpacing(8);
+    m_measureNavigateButton = new QPushButton("Navigate", measurementGroup);
+    m_measureDistanceButton = new QPushButton("Distance", measurementGroup);
+    m_measureAngleButton = new QPushButton("Angle", measurementGroup);
+    for (QPushButton* button : {m_measureNavigateButton, m_measureDistanceButton, m_measureAngleButton}) {
+        button->setCheckable(true);
+    }
+    measurementButtons->addWidget(m_measureNavigateButton, 0, 0);
+    measurementButtons->addWidget(m_measureDistanceButton, 0, 1);
+    measurementButtons->addWidget(m_measureAngleButton, 0, 2);
+    measurementLayout->addLayout(measurementButtons);
+    m_measurementList = new QListWidget(measurementGroup);
+    m_measurementList->setMinimumHeight(130);
+    measurementLayout->addWidget(m_measurementList, 1);
+    auto* measurementForm = new QFormLayout();
+    m_measurementLabel = new QLineEdit(measurementGroup);
+    measurementForm->addRow("Label", m_measurementLabel);
+    measurementLayout->addLayout(measurementForm);
+    auto* measurementEditButtons = new QGridLayout();
+    auto* deleteMeasurement = new QPushButton("Delete", measurementGroup);
+    auto* clearMeasurementsButton = new QPushButton("Clear", measurementGroup);
+    measurementEditButtons->addWidget(deleteMeasurement, 0, 0);
+    measurementEditButtons->addWidget(clearMeasurementsButton, 0, 1);
+    measurementLayout->addLayout(measurementEditButtons);
+    planningSplitter->addWidget(measurementGroup);
 
     auto* instrumentGroup = new QGroupBox("Plan instruments", controlPanel);
     auto* instrumentLayout = new QVBoxLayout(instrumentGroup);
     m_instrumentList = new QListWidget(instrumentGroup);
-    instrumentLayout->addWidget(m_instrumentList);
+    m_instrumentList->setMinimumHeight(160);
+    instrumentLayout->addWidget(m_instrumentList, 1);
 
     auto* form = new QFormLayout();
     m_label = new QLineEdit(instrumentGroup);
@@ -3251,22 +3539,20 @@ void MprPlanVerificationWindow::buildUi()
     drrPlacementButtons->addWidget(m_drrScrewButton, 0, 1);
     drrPlacementButtons->addWidget(m_drrCancelButton, 1, 0, 1, 2);
     instrumentLayout->addLayout(drrPlacementButtons);
-    controls->addWidget(instrumentGroup, 1);
+    planningSplitter->addWidget(instrumentGroup);
+    planningSplitter->setSizes({260, 460});
+    controlPanel->setMinimumWidth(330);
 
-    m_statusLabel = new QLabel(controlPanel);
+    auto* statusGroup = new QGroupBox("Status", drrContent);
+    auto* statusLayout = new QVBoxLayout(statusGroup);
+    m_statusLabel = new QLabel(statusGroup);
     m_statusLabel->setObjectName("StatusInfoLabel");
     m_statusLabel->setWordWrap(true);
-    controls->addWidget(m_statusLabel);
-    controlPanel->setMinimumWidth(300);
-
-    auto* drrPanel = new QWidget(splitter);
-    drrPanel->setObjectName("DrrPanel");
-    drrPanel->setAttribute(Qt::WA_StyledBackground, true);
-    auto* drrPanelLayout = new QVBoxLayout(drrPanel);
-    drrPanelLayout->setContentsMargins(8, 8, 8, 8);
-    drrPanelLayout->setSpacing(8);
+    statusLayout->addWidget(m_statusLabel);
+    drrPanelLayout->addWidget(statusGroup);
     auto* drrGroup = new QGroupBox("DRR 参数", drrPanel);
     auto* drrGroupLayout = new QVBoxLayout(drrGroup);
+    drrGroup->setTitle("DRR Parameters");
     drrGroupLayout->setContentsMargins(9, 9, 9, 9);
     drrGroupLayout->setSpacing(8);
     auto* drrTabs = new QTabWidget(drrGroup);
@@ -3326,21 +3612,21 @@ void MprPlanVerificationWindow::buildUi()
     drrGroupLayout->addWidget(drrTabs);
     drrPanelLayout->addWidget(drrGroup);
     drrPanelLayout->addStretch(1);
-    drrPanel->setMinimumWidth(220);
+    drrPanel->setMinimumWidth(280);
 
     splitter->addWidget(mprPanel);
     splitter->addWidget(xrayPanel);
     splitter->addWidget(controlPanel);
     splitter->addWidget(drrPanel);
     splitter->setChildrenCollapsible(false);
-    // Initial layout target: MPR+3D and DRR image columns occupy about two thirds
-    // of the window, leaving the planning and DRR parameter columns the remaining
-    // third. Stretch factors keep that relationship when the user resizes.
+    // The planning column is reserved for measurement and instrument workflows;
+    // the rightmost auxiliary column owns project, status, patient, and DRR
+    // controls.
     splitter->setStretchFactor(0, 4);
     splitter->setStretchFactor(1, 2);
     splitter->setStretchFactor(2, 2);
-    splitter->setStretchFactor(3, 1);
-    splitter->setSizes({690, 350, 300, 220});
+    splitter->setStretchFactor(3, 2);
+    splitter->setSizes({620, 320, 340, 300});
 
     const auto crosshairCallback = [this](measurement::Vec3d patient) {
         setCrosshairPatient(patient);
@@ -3369,6 +3655,31 @@ void MprPlanVerificationWindow::buildUi()
     m_axialView->setLinkedPlaneFrames(&m_planeFrames);
     m_sagittalView->setLinkedPlaneFrames(&m_planeFrames);
     m_coronalView->setLinkedPlaneFrames(&m_planeFrames);
+    m_axialView->setMeasurements(&m_measurementStore.all());
+    m_sagittalView->setMeasurements(&m_measurementStore.all());
+    m_coronalView->setMeasurements(&m_measurementStore.all());
+
+    const auto measurementPointCallback = [this](
+                                              measurement::MprPlane plane,
+                                              measurement::Vec3d patientPoint,
+                                              measurement::MeasurementPlane slicePlane) {
+        handleMeasurementPointAdded(plane, patientPoint, slicePlane);
+    };
+    const auto measurementHoverCallback = [this](measurement::MprPlane plane, std::optional<measurement::Vec3d> patientPoint) {
+        handleMeasurementHoverChanged(plane, patientPoint);
+    };
+    const auto measurementCancelCallback = [this]() {
+        cancelPendingMeasurement();
+    };
+    m_axialView->setMeasurementPointAddedCallback(measurementPointCallback);
+    m_sagittalView->setMeasurementPointAddedCallback(measurementPointCallback);
+    m_coronalView->setMeasurementPointAddedCallback(measurementPointCallback);
+    m_axialView->setMeasurementHoverChangedCallback(measurementHoverCallback);
+    m_sagittalView->setMeasurementHoverChangedCallback(measurementHoverCallback);
+    m_coronalView->setMeasurementHoverChangedCallback(measurementHoverCallback);
+    m_axialView->setMeasurementCancelCallback(measurementCancelCallback);
+    m_sagittalView->setMeasurementCancelCallback(measurementCancelCallback);
+    m_coronalView->setMeasurementCancelCallback(measurementCancelCallback);
 
     const auto drrLineCompleted = [this](measurement::XrayPreset preset, DrrDetectorLine line) {
         handleDrrLineCompleted(preset, line);
@@ -3394,6 +3705,17 @@ void MprPlanVerificationWindow::buildUi()
     connect(resetViewsButton, &QPushButton::clicked, this, [this]() { resetAllViews(); });
     connect(saveButton, &QPushButton::clicked, this, [this]() { saveProject(); });
     connect(m_freeObliqueButton, &QPushButton::toggled, this, [this](bool checked) { setFreeObliqueMode(checked); });
+    connect(m_measureNavigateButton, &QPushButton::clicked, this, [this]() { setMeasurementMode(measurement::MeasurementMode::Navigate); });
+    connect(m_measureDistanceButton, &QPushButton::clicked, this, [this]() { setMeasurementMode(measurement::MeasurementMode::Distance); });
+    connect(m_measureAngleButton, &QPushButton::clicked, this, [this]() { setMeasurementMode(measurement::MeasurementMode::Angle); });
+    connect(deleteMeasurement, &QPushButton::clicked, this, [this]() { deleteSelectedMeasurement(); });
+    connect(clearMeasurementsButton, &QPushButton::clicked, this, [this]() { clearMeasurements(); });
+    connect(m_measurementLabel, &QLineEdit::editingFinished, this, [this]() { renameSelectedMeasurement(); });
+    connect(m_measurementList, &QListWidget::currentRowChanged, this, [this](int) {
+        if (const auto id = selectedMeasurementId()) {
+            selectMeasurementById(*id);
+        }
+    });
     connect(addPin, &QPushButton::clicked, this, [this]() { addInstrument(measurement::InstrumentType::GuidePin); });
     connect(addScrew, &QPushButton::clicked, this, [this]() { addInstrument(measurement::InstrumentType::PedicleScrew); });
     connect(m_editInstrumentButton, &QPushButton::clicked, this, [this]() { toggleInstrumentEdit(); });
@@ -3507,6 +3829,8 @@ void MprPlanVerificationWindow::buildUi()
         connect(m_drrHuScale[index], qOverload<double>(&QDoubleSpinBox::valueChanged), this, drrSettingChanged);
     }
 
+    setMeasurementMode(measurement::MeasurementMode::Navigate);
+    refreshMeasurementList();
     resize(1560, 840);
 }
 
@@ -4038,7 +4362,221 @@ void MprPlanVerificationWindow::refreshAll(bool refreshScene)
     }
     refreshXrayViews();
     refreshInstrumentList();
+    refreshMeasurementOverlays();
+    refreshMeasurementList();
     refreshStatus();
+}
+
+void MprPlanVerificationWindow::refreshMeasurementOverlays()
+{
+    const auto pendingPlane = m_pendingMeasurementPlane;
+    const std::vector<measurement::Vec3d>& pendingPoints = m_measurementStateMachine.pendingPoints();
+    const auto updateView = [&](MprSliceWidget* view) {
+        if (view == nullptr) {
+            return;
+        }
+
+        std::vector<measurement::Vec3d> viewPendingPoints;
+        std::optional<measurement::Vec3d> viewHoverPoint;
+        if (pendingPlane.has_value() && view->plane() == *pendingPlane) {
+            viewPendingPoints = pendingPoints;
+            viewHoverPoint = m_measurementHoverPatientMm;
+        }
+        view->setMeasurementInteractionState(m_measurementMode, std::move(viewPendingPoints), viewHoverPoint, m_selectedMeasurementId);
+    };
+
+    updateView(m_axialView);
+    updateView(m_sagittalView);
+    updateView(m_coronalView);
+}
+
+void MprPlanVerificationWindow::refreshMeasurementList()
+{
+    if (m_measurementList == nullptr || m_measurementLabel == nullptr) {
+        return;
+    }
+
+    if (m_selectedMeasurementId.isValid() && !m_measurementStore.find(m_selectedMeasurementId).has_value()) {
+        m_selectedMeasurementId = measurement::MeasurementId();
+    }
+
+    m_measurementList->blockSignals(true);
+    m_measurementList->clear();
+    int selectedRow = -1;
+    int row = 0;
+    for (const measurement::MeasurementAnnotation& annotation : m_measurementStore.all()) {
+        const QString itemText = QString("#%1  %2  %3")
+                                     .arg(annotation.id.value())
+                                     .arg(QString::fromUtf8(measurementTypeName(annotation.type)))
+                                     .arg(QString::fromStdString(annotation.displayText()));
+        auto* item = new QListWidgetItem(itemText, m_measurementList);
+        item->setData(Qt::UserRole, static_cast<qlonglong>(annotation.id.value()));
+        if (annotation.id == m_selectedMeasurementId) {
+            selectedRow = row;
+        }
+        ++row;
+    }
+    if (selectedRow >= 0) {
+        m_measurementList->setCurrentRow(selectedRow);
+    }
+    m_measurementList->blockSignals(false);
+
+    const auto selected = m_measurementStore.find(m_selectedMeasurementId);
+    m_measurementLabel->blockSignals(true);
+    m_measurementLabel->setEnabled(selected.has_value());
+    m_measurementLabel->setText(selected.has_value() ? QString::fromStdString(selected->label) : QString());
+    m_measurementLabel->blockSignals(false);
+}
+
+void MprPlanVerificationWindow::setMeasurementMode(measurement::MeasurementMode mode)
+{
+    m_measurementMode = mode;
+    m_measurementStateMachine.setMode(mode);
+    m_pendingMeasurementPlane.reset();
+    m_measurementHoverPatientMm.reset();
+
+    if (m_measureNavigateButton != nullptr) {
+        m_measureNavigateButton->setChecked(mode == measurement::MeasurementMode::Navigate);
+    }
+    if (m_measureDistanceButton != nullptr) {
+        m_measureDistanceButton->setChecked(mode == measurement::MeasurementMode::Distance);
+    }
+    if (m_measureAngleButton != nullptr) {
+        m_measureAngleButton->setChecked(mode == measurement::MeasurementMode::Angle);
+    }
+
+    refreshMeasurementOverlays();
+    refreshStatus();
+}
+
+void MprPlanVerificationWindow::handleMeasurementPointAdded(
+    measurement::MprPlane plane,
+    measurement::Vec3d patientPoint,
+    measurement::MeasurementPlane slicePlane)
+{
+    if (m_measurementMode == measurement::MeasurementMode::Navigate) {
+        return;
+    }
+
+    activateMprPlane(plane);
+    if (!m_pendingMeasurementPlane.has_value() || *m_pendingMeasurementPlane != plane) {
+        m_measurementStateMachine.reset();
+        m_pendingMeasurementPlane = plane;
+    }
+
+    const size_t previousPointCount = m_measurementStateMachine.pendingPoints().size();
+    measurement::MeasurementAnnotation completed;
+    if (m_measurementStateMachine.addPoint(patientPoint, completed)) {
+        completed.createdPlane = slicePlane;
+        completed.createdViewType = measurementViewTypeForPlane(plane);
+        const measurement::MeasurementId id = m_measurementStore.add(std::move(completed));
+        m_pendingMeasurementPlane.reset();
+        m_measurementHoverPatientMm.reset();
+        selectMeasurementById(id);
+        statusBar()->showMessage("Measurement added.", 3000);
+    } else {
+        m_measurementHoverPatientMm = patientPoint;
+        const size_t requiredPointCount = m_measurementMode == measurement::MeasurementMode::Angle ? 4U : 2U;
+        if (previousPointCount + 1U >= requiredPointCount && m_measurementStateMachine.pendingPoints().empty()) {
+            statusBar()->showMessage("Measurement was rejected because the picked points are degenerate.", 5000);
+        }
+    }
+
+    refreshMeasurementOverlays();
+    refreshMeasurementList();
+    refreshStatus();
+}
+
+void MprPlanVerificationWindow::handleMeasurementHoverChanged(
+    measurement::MprPlane plane,
+    std::optional<measurement::Vec3d> patientPoint)
+{
+    if (!m_pendingMeasurementPlane.has_value() || *m_pendingMeasurementPlane != plane) {
+        return;
+    }
+
+    m_measurementHoverPatientMm = patientPoint;
+    refreshMeasurementOverlays();
+}
+
+void MprPlanVerificationWindow::cancelPendingMeasurement()
+{
+    m_measurementStateMachine.reset();
+    m_pendingMeasurementPlane.reset();
+    m_measurementHoverPatientMm.reset();
+    refreshMeasurementOverlays();
+    refreshStatus();
+}
+
+void MprPlanVerificationWindow::selectMeasurementById(measurement::MeasurementId id)
+{
+    if (!id.isValid()) {
+        return;
+    }
+
+    m_selectedMeasurementId = id;
+    for (const measurement::MeasurementAnnotation& annotation : m_measurementStore.all()) {
+        measurement::MeasurementAnnotation updated = annotation;
+        const bool shouldSelect = annotation.id == id;
+        if (updated.selected != shouldSelect) {
+            updated.selected = shouldSelect;
+            (void)m_measurementStore.update(updated);
+        }
+    }
+    refreshMeasurementOverlays();
+    refreshMeasurementList();
+}
+
+void MprPlanVerificationWindow::deleteSelectedMeasurement()
+{
+    const auto id = selectedMeasurementId();
+    if (!id.has_value()) {
+        return;
+    }
+
+    (void)m_measurementStore.remove(*id);
+    m_selectedMeasurementId = measurement::MeasurementId();
+    cancelPendingMeasurement();
+    refreshMeasurementList();
+    refreshStatus();
+}
+
+void MprPlanVerificationWindow::clearMeasurements()
+{
+    m_measurementStore.clear();
+    m_selectedMeasurementId = measurement::MeasurementId();
+    cancelPendingMeasurement();
+    refreshMeasurementList();
+    refreshStatus();
+}
+
+void MprPlanVerificationWindow::renameSelectedMeasurement()
+{
+    if (m_measurementLabel == nullptr) {
+        return;
+    }
+
+    const auto id = selectedMeasurementId();
+    if (!id.has_value()) {
+        return;
+    }
+
+    (void)m_measurementStore.rename(*id, m_measurementLabel->text().trimmed().toStdString());
+    refreshMeasurementOverlays();
+    refreshMeasurementList();
+}
+
+std::optional<measurement::MeasurementId> MprPlanVerificationWindow::selectedMeasurementId() const
+{
+    if (m_measurementList == nullptr || m_measurementList->currentItem() == nullptr) {
+        return std::nullopt;
+    }
+
+    const qlonglong id = m_measurementList->currentItem()->data(Qt::UserRole).toLongLong();
+    if (id < 0) {
+        return std::nullopt;
+    }
+    return measurement::MeasurementId(static_cast<std::int64_t>(id));
 }
 
 void MprPlanVerificationWindow::refreshPlanScene()
@@ -4461,9 +4999,17 @@ void MprPlanVerificationWindow::refreshStatus()
             ? " (AP fixed, draw constrained LAT)"
             : " (draw AP first)";
     }
-    m_statusLabel->setText(QString("Active view: %1\nMPR mode: %2\nInstrument edit: %3\nDRR placement: %4\nPlan instruments: %5")
+    const QString pendingMeasurement = m_pendingMeasurementPlane.has_value()
+        ? QString(", pending %1/%2")
+              .arg(m_measurementStateMachine.pendingPoints().size())
+              .arg(m_measurementMode == measurement::MeasurementMode::Angle ? 4 : 2)
+        : QString();
+    m_statusLabel->setText(QString("Active view: %1\nMPR mode: %2\nMeasurement: %3%4 (%5)\nInstrument edit: %6\nDRR placement: %7\nPlan instruments: %8")
                                .arg(QString::fromUtf8(planeTitle(m_activeMprPlane)))
                                .arg(m_freeObliqueMode ? "Free oblique" : "Orthogonal")
+                               .arg(QString::fromUtf8(measurementModeName(m_measurementMode)))
+                               .arg(pendingMeasurement)
+                               .arg(m_measurementStore.size())
                                .arg(editMode)
                                .arg(drrPlacement)
                                .arg(m_plan.instruments().size()));

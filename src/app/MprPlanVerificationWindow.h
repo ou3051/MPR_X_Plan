@@ -3,6 +3,9 @@
 #include "DrrInteractionGeometry.h"
 #include "InstrumentRenderModel.h"
 #include "measurement/core/Instrument.h"
+#include "measurement/core/MeasurementAnnotation.h"
+#include "measurement/core/MeasurementStateMachine.h"
+#include "measurement/core/MeasurementStore.h"
 #include "measurement/core/Volume.h"
 #include "measurement/core/Xray.h"
 #include "measurement/mpr/MprResliceEngine.h"
@@ -77,6 +80,17 @@ public:
     void setWindowLevelChangedCallback(std::function<void(double, double)> callback);
     void setPlaneRotationCallback(std::function<void(measurement::MprPlane, measurement::MprPlane, double)> callback);
     void setActivatedCallback(std::function<void(measurement::MprPlane)> callback);
+    void setMeasurements(const std::vector<measurement::MeasurementAnnotation>* measurements);
+    void setMeasurementInteractionState(
+        measurement::MeasurementMode mode,
+        std::vector<measurement::Vec3d> pendingPoints,
+        std::optional<measurement::Vec3d> hoverPoint,
+        measurement::MeasurementId selectedId);
+    void setMeasurementPointAddedCallback(
+        std::function<void(measurement::MprPlane, measurement::Vec3d, measurement::MeasurementPlane)> callback);
+    void setMeasurementHoverChangedCallback(
+        std::function<void(measurement::MprPlane, std::optional<measurement::Vec3d>)> callback);
+    void setMeasurementCancelCallback(std::function<void()> callback);
     void resetViewPresentation();
 
 protected:
@@ -126,9 +140,14 @@ private:
     [[nodiscard]] QPointF visibleHandlePoint(QPointF centerImage, QPointF directionImage) const;
     [[nodiscard]] std::pair<QPointF, QPointF> visibleCrosslineEndpoints(const CrosslineInfo& line) const;
     [[nodiscard]] std::pair<QPointF, QPointF> crosslineHandleCenters(const CrosslineInfo& line) const;
+    [[nodiscard]] std::optional<measurement::MeasurementPlane> currentMeasurementPlane() const;
+    [[nodiscard]] std::optional<measurement::Vec3d> patientPointFromWidgetPosition(const QPoint& position) const;
     void drawCrossline(QPainter& painter, const CrosslineInfo& line, QColor color, bool drawHandle);
     void drawCrosslineOrientationLabels(QPainter& painter, const CrosslineInfo& line, QColor color);
     void drawRotationHandle(QPainter& painter, QPointF centerImage, QPointF directionImage, QColor color);
+    void drawMeasurementOverlays(QPainter& painter);
+    void drawMeasurementAnnotation(QPainter& painter, const measurement::MeasurementVisibilityResult& result);
+    void drawMeasurementPreview(QPainter& painter);
     void anchorCrosshairAtImagePoint(QPointF imagePoint);
     void updateCursorForHover(const QPoint& position);
     void beginCrosshairDrag(InteractionTarget target, const QPoint& position);
@@ -155,12 +174,20 @@ private:
     measurement::VtkMprResliceAdapter m_resliceAdapter;
     std::string m_selectedInstrumentId;
     std::vector<InstrumentRenderSection> m_instrumentSections;
+    const std::vector<measurement::MeasurementAnnotation>* m_measurements = nullptr;
+    measurement::MeasurementMode m_measurementMode = measurement::MeasurementMode::Navigate;
+    std::vector<measurement::Vec3d> m_pendingMeasurementPoints;
+    std::optional<measurement::Vec3d> m_measurementHoverPatientMm;
+    measurement::MeasurementId m_selectedMeasurementId;
     QImage m_image;
     QString m_renderStatus;
     std::function<void(measurement::Vec3d)> m_crosshairChanged;
     std::function<void(double, double)> m_windowLevelChanged;
     std::function<void(measurement::MprPlane, measurement::MprPlane, double)> m_planeRotationChanged;
     std::function<void(measurement::MprPlane)> m_activated;
+    std::function<void(measurement::MprPlane, measurement::Vec3d, measurement::MeasurementPlane)> m_measurementPointAdded;
+    std::function<void(measurement::MprPlane, std::optional<measurement::Vec3d>)> m_measurementHoverChanged;
+    std::function<void()> m_measurementCancelRequested;
     double m_zoom = 1.0;
     measurement::Vec3d m_pan{};
     double m_windowCenterHu = 400.0;
@@ -261,6 +288,20 @@ private:
     void refreshPlanScene();
     void refreshXrayViews();
     void refreshXrayInteractionOverlays();
+    void refreshMeasurementOverlays();
+    void refreshMeasurementList();
+    void setMeasurementMode(measurement::MeasurementMode mode);
+    void handleMeasurementPointAdded(
+        measurement::MprPlane plane,
+        measurement::Vec3d patientPoint,
+        measurement::MeasurementPlane slicePlane);
+    void handleMeasurementHoverChanged(measurement::MprPlane plane, std::optional<measurement::Vec3d> patientPoint);
+    void cancelPendingMeasurement();
+    void selectMeasurementById(measurement::MeasurementId id);
+    void deleteSelectedMeasurement();
+    void clearMeasurements();
+    void renameSelectedMeasurement();
+    [[nodiscard]] std::optional<measurement::MeasurementId> selectedMeasurementId() const;
     [[nodiscard]] DrrUiSettings drrSettingsFromControls(measurement::XrayPreset preset) const;
     void setDrrPlacementMode(std::optional<measurement::InstrumentType> type);
     void cancelDrrPlacement();
@@ -300,6 +341,8 @@ private:
 
     measurement::VolumeData m_volume;
     measurement::SurgicalPlan m_plan;
+    measurement::MeasurementStore m_measurementStore;
+    measurement::MeasurementStateMachine m_measurementStateMachine;
     std::unique_ptr<measurement::InstrumentPlanController> m_planController;
     std::unique_ptr<measurement::InstrumentPlacementController> m_placementController;
     measurement::MprViewState m_mprState;
@@ -307,6 +350,10 @@ private:
     std::array<measurement::MprViewState, 3> m_viewStates{};
     measurement::MprPlane m_activeMprPlane = measurement::MprPlane::Axial;
     measurement::MprPlane m_activeCrosshairLinePlane = measurement::MprPlane::Sagittal;
+    std::optional<measurement::MprPlane> m_pendingMeasurementPlane;
+    std::optional<measurement::Vec3d> m_measurementHoverPatientMm;
+    measurement::MeasurementId m_selectedMeasurementId;
+    measurement::MeasurementMode m_measurementMode = measurement::MeasurementMode::Navigate;
     int m_nextInstrumentIndex = 1;
     bool m_syncingControls = false;
     bool m_freeObliqueMode = false;
@@ -339,6 +386,11 @@ private:
     std::array<std::optional<DrrDetectorLine>, 2> m_pendingDrrLines{};
     QLabel* m_statusLabel = nullptr;
     QLabel* m_volumeLabel = nullptr;
+    QListWidget* m_measurementList = nullptr;
+    QLineEdit* m_measurementLabel = nullptr;
+    QPushButton* m_measureNavigateButton = nullptr;
+    QPushButton* m_measureDistanceButton = nullptr;
+    QPushButton* m_measureAngleButton = nullptr;
     QComboBox* m_patientPostureCombo = nullptr;
     QComboBox* m_headFeetDirectionCombo = nullptr;
     QListWidget* m_instrumentList = nullptr;

@@ -1,6 +1,10 @@
 add_library(measurement_core STATIC
     src/Geometry.cpp
     src/Instrument.cpp
+    src/MeasurementAnnotation.cpp
+    src/MeasurementStateMachine.cpp
+    src/MeasurementStore.cpp
+    src/MeasurementVisibility.cpp
     src/Volume.cpp
 )
 

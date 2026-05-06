@@ -5,6 +5,7 @@ add_executable(measurement_unit_tests
     unit/DrrInteractionGeometryTests.cpp
     unit/InstrumentRenderModelTests.cpp
     unit/DicomVolumeLoaderTests.cpp
+    unit/MeasurementAnnotationTests.cpp
     unit/MprResliceTests.cpp
     unit/ProjectManifestTests.cpp
 )
