@@ -301,10 +301,10 @@ constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_
 
 class ScopedModalBusyDialog {
 public:
-    ScopedModalBusyDialog(QWidget* parent, QString labelText)
+    ScopedModalBusyDialog(QWidget* parent, QString labelText, QString windowTitle = "Please Wait")
         : m_dialog(new QProgressDialog(std::move(labelText), QString(), 0, 0, parent))
     {
-        m_dialog->setWindowTitle("Updating Patient Position");
+        m_dialog->setWindowTitle(std::move(windowTitle));
         m_dialog->setWindowModality(Qt::ApplicationModal);
         m_dialog->setCancelButton(nullptr);
         m_dialog->setMinimumDuration(0);
@@ -2226,6 +2226,7 @@ public:
         , m_title(std::move(title))
         , m_preset(preset)
     {
+        setObjectName("XrayViewport");
         setMinimumSize(260, 220);
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
@@ -2233,8 +2234,8 @@ public:
 
         m_renderWindow = vtkSmartPointer<vtkGenericOpenGLRenderWindow>::New();
         m_renderer = vtkSmartPointer<vtkRenderer>::New();
-        m_renderer->SetBackground(0.07, 0.08, 0.10);
-        m_renderer->SetBackground2(0.13, 0.15, 0.18);
+        m_renderer->SetBackground(0.06, 0.10, 0.13);
+        m_renderer->SetBackground2(0.14, 0.22, 0.27);
         m_renderer->GradientBackgroundOn();
         m_renderWindow->AddRenderer(m_renderer);
 
@@ -2249,9 +2250,9 @@ public:
         }
 
         m_captionLabel = new QLabel(this);
+        m_captionLabel->setObjectName("XrayCaption");
         m_captionLabel->setMinimumHeight(22);
         m_captionLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-        m_captionLabel->setStyleSheet("QLabel { color: #cfd5df; padding-left: 6px; }");
         layout->addWidget(m_captionLabel);
     }
 
@@ -3117,8 +3118,13 @@ void MprPlanVerificationWindow::buildUi()
     setWindowTitle("Interactive MPR Test");
 
     auto* central = new QWidget(this);
+    central->setObjectName("AppRoot");
+    central->setAttribute(Qt::WA_StyledBackground, true);
     auto* root = new QHBoxLayout(central);
+    root->setContentsMargins(12, 12, 12, 8);
+    root->setSpacing(0);
     auto* splitter = new QSplitter(Qt::Horizontal, central);
+    splitter->setObjectName("MainSplitter");
     root->addWidget(splitter);
     setCentralWidget(central);
 
@@ -3134,17 +3140,26 @@ void MprPlanVerificationWindow::buildUi()
     mprLayout->addWidget(m_sceneView, 1, 1);
 
     auto* xrayPanel = new QWidget(splitter);
+    xrayPanel->setObjectName("XrayPanel");
+    xrayPanel->setAttribute(Qt::WA_StyledBackground, true);
     auto* xrayLayout = new QVBoxLayout(xrayPanel);
-    xrayLayout->setContentsMargins(6, 6, 6, 6);
+    xrayLayout->setContentsMargins(8, 8, 8, 8);
+    xrayLayout->setSpacing(8);
     m_apXrayView = new XrayDisplayWidget("AP X-ray", measurement::XrayPreset::AP, xrayPanel);
     m_latXrayView = new XrayDisplayWidget("LAT X-ray", measurement::XrayPreset::LAT, xrayPanel);
     xrayLayout->addWidget(m_apXrayView, 1);
     xrayLayout->addWidget(m_latXrayView, 1);
 
     auto* controlPanel = new QWidget(splitter);
+    controlPanel->setObjectName("ControlPanel");
+    controlPanel->setAttribute(Qt::WA_StyledBackground, true);
     auto* controls = new QVBoxLayout(controlPanel);
+    controls->setContentsMargins(8, 8, 8, 8);
+    controls->setSpacing(8);
 
     auto* loadGrid = new QGridLayout();
+    loadGrid->setHorizontalSpacing(8);
+    loadGrid->setVerticalSpacing(8);
     m_loadDicomButton = new QPushButton("Load DICOM", controlPanel);
     auto* resetViewsButton = new QPushButton("Reset Views", controlPanel);
     auto* saveButton = new QPushButton("Save .mprproj", controlPanel);
@@ -3159,6 +3174,7 @@ void MprPlanVerificationWindow::buildUi()
     controls->addLayout(loadGrid);
 
     m_volumeLabel = new QLabel(controlPanel);
+    m_volumeLabel->setObjectName("VolumeInfoLabel");
     m_volumeLabel->setWordWrap(true);
     controls->addWidget(m_volumeLabel);
 
@@ -3211,6 +3227,8 @@ void MprPlanVerificationWindow::buildUi()
     instrumentLayout->addLayout(form);
 
     auto* instrumentButtons = new QGridLayout();
+    instrumentButtons->setHorizontalSpacing(8);
+    instrumentButtons->setVerticalSpacing(8);
     auto* addPin = new QPushButton("Add pin at crosshair", instrumentGroup);
     auto* addScrew = new QPushButton("Add screw at crosshair", instrumentGroup);
     m_editInstrumentButton = new QPushButton("Edit selected", instrumentGroup);
@@ -3222,6 +3240,8 @@ void MprPlanVerificationWindow::buildUi()
     instrumentLayout->addLayout(instrumentButtons);
 
     auto* drrPlacementButtons = new QGridLayout();
+    drrPlacementButtons->setHorizontalSpacing(8);
+    drrPlacementButtons->setVerticalSpacing(8);
     m_drrPinButton = new QPushButton("DRR Pin", instrumentGroup);
     m_drrScrewButton = new QPushButton("DRR Screw", instrumentGroup);
     m_drrCancelButton = new QPushButton("Cancel DRR placement", instrumentGroup);
@@ -3234,14 +3254,21 @@ void MprPlanVerificationWindow::buildUi()
     controls->addWidget(instrumentGroup, 1);
 
     m_statusLabel = new QLabel(controlPanel);
+    m_statusLabel->setObjectName("StatusInfoLabel");
     m_statusLabel->setWordWrap(true);
     controls->addWidget(m_statusLabel);
     controlPanel->setMinimumWidth(300);
 
     auto* drrPanel = new QWidget(splitter);
+    drrPanel->setObjectName("DrrPanel");
+    drrPanel->setAttribute(Qt::WA_StyledBackground, true);
     auto* drrPanelLayout = new QVBoxLayout(drrPanel);
+    drrPanelLayout->setContentsMargins(8, 8, 8, 8);
+    drrPanelLayout->setSpacing(8);
     auto* drrGroup = new QGroupBox("DRR 参数", drrPanel);
     auto* drrGroupLayout = new QVBoxLayout(drrGroup);
+    drrGroupLayout->setContentsMargins(9, 9, 9, 9);
+    drrGroupLayout->setSpacing(8);
     auto* drrTabs = new QTabWidget(drrGroup);
 
     const auto makeDrrParameterPage = [&](measurement::XrayPreset preset, const QString& title) {
@@ -3535,6 +3562,10 @@ void MprPlanVerificationWindow::loadDicomFolder()
 
 bool MprPlanVerificationWindow::tryLoadDicomFolder(const QString& folder, QString* failureMessage)
 {
+    ScopedModalBusyDialog busyDialog(
+        this,
+        QString("Loading DICOM from %1...").arg(QDir::toNativeSeparators(folder)),
+        "Loading DICOM");
     measurement::DicomVolumeLoader loader;
     const auto loaded = loader.loadFolder(folder.toStdString());
     if (!loaded.ok()) {
@@ -3740,7 +3771,7 @@ void MprPlanVerificationWindow::applyPatientPosition(bool prone, bool feetFirst)
         return;
     }
 
-    ScopedModalBusyDialog busyDialog(this, "Updating patient position...");
+    ScopedModalBusyDialog busyDialog(this, "Updating patient position...", "Updating Patient Position");
 
     const auto applyRigidRotation = [&](measurement::Vec3d axis, double angleRad) {
         const auto transformPoint = [&](measurement::Vec3d point) {
