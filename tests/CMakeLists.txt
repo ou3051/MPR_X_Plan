@@ -69,4 +69,4 @@ endif()
 measurement_apply_common_options(measurement_unit_tests)
 
 include(GoogleTest)
-gtest_discover_tests(measurement_unit_tests)
+gtest_discover_tests(measurement_unit_tests DISCOVERY_TIMEOUT 30)

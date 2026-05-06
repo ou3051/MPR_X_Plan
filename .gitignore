@@ -49,6 +49,8 @@ screenshots/
 third_party/*
 !third_party/README.md
 !third_party/.gitkeep
+!third_party/googletest/
+!third_party/googletest/**
 
 # OS files
 Thumbs.db
