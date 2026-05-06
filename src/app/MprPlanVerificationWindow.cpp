@@ -27,6 +27,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPen>
 #include <QProgressDialog>
 #include <QPushButton>
@@ -102,6 +103,16 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr auto kDefaultDicomFolder = R"(D:\code\dicom)";
 constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_332)";
 
+struct MeasurementAngleArcInfo {
+    bool valid = false;
+    QPointF center;
+    double radius = 0.0;
+    double start = 0.0;
+    double span = 0.0;
+    QPointF endpointA;
+    QPointF endpointB;
+};
+
 [[nodiscard]] QString summarizeLoadFailure(const QString& folder, const measurement::ErrorInfo& error)
 {
     const QString detail = error.detail.empty()
@@ -137,6 +148,21 @@ constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_
     return measurement::MeasurementViewType::Oblique;
 }
 
+[[nodiscard]] std::optional<measurement::MprPlane> planeForMeasurementViewType(measurement::MeasurementViewType viewType)
+{
+    switch (viewType) {
+    case measurement::MeasurementViewType::Axial:
+        return measurement::MprPlane::Axial;
+    case measurement::MeasurementViewType::Sagittal:
+        return measurement::MprPlane::Sagittal;
+    case measurement::MeasurementViewType::Coronal:
+        return measurement::MprPlane::Coronal;
+    case measurement::MeasurementViewType::Oblique:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] const char* measurementModeName(measurement::MeasurementMode mode)
 {
     switch (mode) {
@@ -158,6 +184,281 @@ constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_
 [[nodiscard]] double clampDouble(double value, double minValue, double maxValue)
 {
     return std::max(minValue, std::min(maxValue, value));
+}
+
+[[nodiscard]] double normalizeAngleRad(double angle)
+{
+    const double twoPi = kPi * 2.0;
+    while (angle < 0.0) {
+        angle += twoPi;
+    }
+    while (angle >= twoPi) {
+        angle -= twoPi;
+    }
+    return angle;
+}
+
+[[nodiscard]] double shortestAngleDeltaRad(double start, double end)
+{
+    double delta = normalizeAngleRad(end) - normalizeAngleRad(start);
+    if (delta > kPi) {
+        delta -= kPi * 2.0;
+    } else if (delta < -kPi) {
+        delta += kPi * 2.0;
+    }
+    return delta;
+}
+
+[[nodiscard]] double arcMidAngleRad(double start, double span)
+{
+    return start + span * 0.5;
+}
+
+[[nodiscard]] double distanceToPoint(QPointF first, QPointF second)
+{
+    return std::hypot(first.x() - second.x(), first.y() - second.y());
+}
+
+[[nodiscard]] MeasurementAngleArcInfo angleArcInfo(const std::vector<QPointF>& points, QSizeF bounds)
+{
+    MeasurementAngleArcInfo arc;
+    if (points.size() != 4) {
+        return arc;
+    }
+
+    const QPointF p1 = points[0];
+    const QPointF p2 = points[1];
+    const QPointF p3 = points[2];
+    const QPointF p4 = points[3];
+    const double denominator =
+        (p1.x() - p2.x()) * (p3.y() - p4.y())
+        - (p1.y() - p2.y()) * (p3.x() - p4.x());
+    if (std::abs(denominator) < 1.0e-6) {
+        return arc;
+    }
+
+    const double line1 = p1.x() * p2.y() - p1.y() * p2.x();
+    const double line2 = p3.x() * p4.y() - p3.y() * p4.x();
+    const QPointF center{
+        (line1 * (p3.x() - p4.x()) - (p1.x() - p2.x()) * line2) / denominator,
+        (line1 * (p3.y() - p4.y()) - (p1.y() - p2.y()) * line2) / denominator,
+    };
+    if (!std::isfinite(center.x()) || !std::isfinite(center.y())) {
+        return arc;
+    }
+    if (center.x() < -bounds.width()
+        || center.x() > bounds.width() * 2.0
+        || center.y() < -bounds.height()
+        || center.y() > bounds.height() * 2.0) {
+        return arc;
+    }
+
+    const std::array<QPointF, 2> firstEndpoints{p1, p2};
+    const std::array<QPointF, 2> secondEndpoints{p3, p4};
+    double bestStart = std::atan2(p1.y() - center.y(), p1.x() - center.x());
+    double bestDelta = kPi * 2.0;
+    QPointF endpointA = p1;
+    QPointF endpointB = p3;
+    for (QPointF first : firstEndpoints) {
+        const double angleA = std::atan2(first.y() - center.y(), first.x() - center.x());
+        for (QPointF second : secondEndpoints) {
+            const double angleB = std::atan2(second.y() - center.y(), second.x() - center.x());
+            const double delta = shortestAngleDeltaRad(angleA, angleB);
+            if (std::abs(delta) < std::abs(bestDelta)) {
+                bestDelta = delta;
+                bestStart = angleA;
+                endpointA = first;
+                endpointB = second;
+            }
+        }
+    }
+
+    const double minDistance = std::min({
+        distanceToPoint(center, p1),
+        distanceToPoint(center, p2),
+        distanceToPoint(center, p3),
+        distanceToPoint(center, p4),
+    });
+    const double radius = std::max(16.0, std::min(48.0, std::min(32.0, minDistance / 3.0)));
+    if (!std::isfinite(radius) || radius < 1.0) {
+        return arc;
+    }
+
+    arc.valid = true;
+    arc.center = center;
+    arc.radius = radius;
+    arc.start = bestStart;
+    arc.span = bestDelta;
+    arc.endpointA = endpointA;
+    arc.endpointB = endpointB;
+    return arc;
+}
+
+void drawMeasurementPolyline(QPainter& painter, const std::vector<QPointF>& points, QColor color, double lineWidth)
+{
+    if (points.size() < 2) {
+        return;
+    }
+
+    QPen pen(color, lineWidth);
+    pen.setCosmetic(true);
+    painter.save();
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    for (size_t index = 1; index < points.size(); ++index) {
+        painter.drawLine(points[index - 1], points[index]);
+    }
+    painter.restore();
+}
+
+void drawMeasurementHandles(QPainter& painter, const std::vector<QPointF>& points, QColor color)
+{
+    painter.save();
+    QPen pen(color, 2.0);
+    pen.setCosmetic(true);
+    painter.setPen(pen);
+    painter.setBrush(QColor(16, 19, 26));
+    for (QPointF point : points) {
+        painter.drawEllipse(point, 4.0, 4.0);
+    }
+    painter.restore();
+}
+
+void drawMeasurementLabel(
+    QPainter& painter,
+    QSizeF bounds,
+    const QString& label,
+    QPointF anchor,
+    QColor color,
+    double verticalOffset = 0.0)
+{
+    if (label.isEmpty()) {
+        return;
+    }
+
+    painter.save();
+    QFont font = painter.font();
+    font.setPointSizeF(12.0);
+    painter.setFont(font);
+    const QFontMetricsF metrics(font);
+    constexpr double paddingX = 8.0;
+    constexpr double rectHeight = 22.0;
+    const double rectWidth = metrics.horizontalAdvance(label) + paddingX * 2.0;
+    const double maxX = std::max(4.0, bounds.width() - rectWidth - 4.0);
+    const double maxY = std::max(4.0, bounds.height() - rectHeight);
+    const double x = clampDouble(anchor.x() + 10.0, 4.0, maxX);
+    const double y = clampDouble(anchor.y() - 26.0 + verticalOffset, 4.0, maxY);
+    const QRectF rect(x, y, rectWidth, rectHeight);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(16, 19, 26, 208));
+    painter.drawRect(rect);
+    QPen outline(color, 1.0);
+    outline.setCosmetic(true);
+    painter.setPen(outline);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(rect);
+    painter.setPen(Qt::white);
+    painter.drawText(rect.adjusted(paddingX, 0.0, -paddingX, 0.0), Qt::AlignVCenter | Qt::AlignLeft, label);
+    painter.restore();
+}
+
+void drawAngleArc(QPainter& painter, const MeasurementAngleArcInfo& arc, QColor color)
+{
+    if (!arc.valid) {
+        return;
+    }
+
+    painter.save();
+    QPen extensionPen(color, 1.5);
+    extensionPen.setCosmetic(true);
+    extensionPen.setDashPattern({5.0, 4.0});
+    extensionPen.setColor(QColor(color.red(), color.green(), color.blue(), 184));
+    painter.setPen(extensionPen);
+    painter.drawLine(arc.endpointA, arc.center);
+    painter.drawLine(arc.endpointB, arc.center);
+
+    QPen arcPen(color, 2.0);
+    arcPen.setCosmetic(true);
+    painter.setPen(arcPen);
+    QPainterPath path;
+    constexpr int kArcSegments = 36;
+    for (int index = 0; index <= kArcSegments; ++index) {
+        const double t = static_cast<double>(index) / static_cast<double>(kArcSegments);
+        const double angle = arc.start + arc.span * t;
+        const QPointF point{
+            arc.center.x() + std::cos(angle) * arc.radius,
+            arc.center.y() + std::sin(angle) * arc.radius,
+        };
+        if (index == 0) {
+            path.moveTo(point);
+        } else {
+            path.lineTo(point);
+        }
+    }
+    painter.drawPath(path);
+    painter.restore();
+}
+
+void drawAngleMeasurement(QPainter& painter, const std::vector<QPointF>& points, QColor color, QSizeF bounds)
+{
+    if (points.size() != 4) {
+        return;
+    }
+
+    painter.save();
+    QPen pen(color, 2.5);
+    pen.setCosmetic(true);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawLine(points[0], points[1]);
+    painter.drawLine(points[2], points[3]);
+    painter.restore();
+
+    drawAngleArc(painter, angleArcInfo(points, bounds), color);
+    drawMeasurementHandles(painter, points, color);
+}
+
+[[nodiscard]] QPointF angleLabelAnchor(const std::vector<QPointF>& points, QSizeF bounds)
+{
+    const MeasurementAngleArcInfo arc = angleArcInfo(points, bounds);
+    if (arc.valid) {
+        const double midAngle = arcMidAngleRad(arc.start, arc.span);
+        return {
+            arc.center.x() + std::cos(midAngle) * (arc.radius + 12.0),
+            arc.center.y() + std::sin(midAngle) * (arc.radius + 12.0),
+        };
+    }
+
+    if (points.size() >= 4) {
+        const QPointF firstMidpoint = (points[0] + points[1]) * 0.5;
+        const QPointF secondMidpoint = (points[2] + points[3]) * 0.5;
+        return (firstMidpoint + secondMidpoint) * 0.5;
+    }
+
+    return points.empty() ? QPointF{} : points.back();
+}
+
+void drawMeasurementLabels(
+    QPainter& painter,
+    QSizeF bounds,
+    const std::string& label,
+    const std::string& measurementText,
+    const std::string& displayText,
+    QPointF anchor,
+    QColor color)
+{
+    const QString nameText = QString::fromStdString(label);
+    QString valueText = QString::fromStdString(measurementText);
+    if (valueText.isEmpty() && nameText.isEmpty()) {
+        valueText = QString::fromStdString(displayText);
+    }
+
+    const bool hasName = !nameText.isEmpty();
+    if (hasName) {
+        drawMeasurementLabel(painter, bounds, nameText, anchor, color, -24.0);
+    }
+    drawMeasurementLabel(painter, bounds, valueText, anchor, color, hasName ? 2.0 : 0.0);
 }
 
 [[nodiscard]] bool isFiniteVec(measurement::Vec3d value)
@@ -186,6 +487,43 @@ constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_
 [[nodiscard]] int xrayPresetIndex(measurement::XrayPreset preset)
 {
     return preset == measurement::XrayPreset::LAT ? 1 : 0;
+}
+
+[[nodiscard]] measurement::Vec3d stableCrosslineDirectionPatient(
+    const measurement::VolumeData* volume,
+    const std::array<measurement::MprSliceFrame, 3>& frames,
+    measurement::MprPlane firstPlane,
+    measurement::MprPlane secondPlane)
+{
+    if (firstPlane == secondPlane) {
+        return {};
+    }
+
+    measurement::MprPlane lowerPlane = firstPlane;
+    measurement::MprPlane upperPlane = secondPlane;
+    if (planeIndex(lowerPlane) > planeIndex(upperPlane)) {
+        std::swap(lowerPlane, upperPlane);
+    }
+
+    measurement::Vec3d direction = measurement::normalize(measurement::cross(
+        frames[planeIndex(lowerPlane)].normalPatientUnit,
+        frames[planeIndex(upperPlane)].normalPatientUnit));
+    if (!isFiniteVec(direction) || measurement::length(direction) <= 1.0e-6) {
+        return {};
+    }
+
+    if (volume != nullptr) {
+        const measurement::Vec3d reference = measurement::normalize(measurement::cross(
+            measurement::planeNormalPatient(volume->metadata, lowerPlane),
+            measurement::planeNormalPatient(volume->metadata, upperPlane)));
+        if (isFiniteVec(reference)
+            && measurement::length(reference) > 1.0e-6
+            && measurement::dot(direction, reference) < 0.0) {
+            direction = direction * -1.0;
+        }
+    }
+
+    return direction;
 }
 
 [[nodiscard]] measurement::Vec3d rotateAroundAxis(
@@ -906,7 +1244,7 @@ std::array<MprSliceWidget::CrosslineInfo, 2> MprSliceWidget::crosslines() const
             continue;
         }
 
-        const measurement::Vec3d directionPatient = measurement::normalize(
+        measurement::Vec3d directionPatient = measurement::normalize(
             measurement::cross(currentFrame.normalPatientUnit, (*m_linkedPlaneFrames)[index].normalPatientUnit));
         const QPointF direction = imageDirectionForPlane(currentFrame, (*m_linkedPlaneFrames)[index].normalPatientUnit);
         const double directionLength = std::hypot(direction.x(), direction.y());
@@ -914,11 +1252,22 @@ std::array<MprSliceWidget::CrosslineInfo, 2> MprSliceWidget::crosslines() const
             continue;
         }
 
+        QPointF stableDirection = direction;
+        const measurement::MprPlane sourcePlane = static_cast<measurement::MprPlane>(index);
+        const measurement::Vec3d stableDirectionPatient =
+            stableCrosslineDirectionPatient(m_volume, *m_linkedPlaneFrames, m_plane, sourcePlane);
+        if (isFiniteVec(stableDirectionPatient)
+            && measurement::length(stableDirectionPatient) > 1.0e-6
+            && measurement::dot(directionPatient, stableDirectionPatient) < 0.0) {
+            directionPatient = directionPatient * -1.0;
+            stableDirection = {-direction.x(), -direction.y()};
+        }
+
         lines[lineSlot].sourcePlane = static_cast<measurement::MprPlane>(index);
         lines[lineSlot].centerImage = center;
         lines[lineSlot].directionImage = {
-            direction.x() / directionLength,
-            direction.y() / directionLength,
+            stableDirection.x() / directionLength,
+            stableDirection.y() / directionLength,
         };
         lines[lineSlot].handleImage = visibleHandlePoint(center, lines[lineSlot].directionImage);
         lines[lineSlot].directionPatientUnit = directionPatient;
@@ -1039,7 +1388,12 @@ std::pair<QPointF, QPointF> MprSliceWidget::crosslineHandleCenters(const Crossli
     };
 }
 
-void MprSliceWidget::drawCrossline(QPainter& painter, const CrosslineInfo& line, QColor color, bool drawHandle)
+void MprSliceWidget::drawCrossline(
+    QPainter& painter,
+    const CrosslineInfo& line,
+    QColor color,
+    bool drawHandle,
+    bool drawDirectionCue)
 {
     if (std::hypot(line.directionImage.x(), line.directionImage.y()) <= 1.0e-6) {
         return;
@@ -1054,6 +1408,13 @@ void MprSliceWidget::drawCrossline(QPainter& painter, const CrosslineInfo& line,
         const auto [startHandle, endHandle] = crosslineHandleCenters(line);
         drawRotationHandle(painter, startHandle, line.directionImage, color);
         drawRotationHandle(painter, endHandle, line.directionImage, color);
+        if (drawDirectionCue) {
+            drawInstrumentDirectionCue(
+                painter,
+                startHandle,
+                {-line.directionImage.x(), -line.directionImage.y()},
+                QColor(255, 247, 150, 250));
+        }
     }
 }
 
@@ -1136,6 +1497,56 @@ void MprSliceWidget::drawRotationHandle(QPainter& painter, QPointF centerImage, 
     painter.drawLine(
         QPointF(centerImage.x() + offset.x() - barHalf.x(), centerImage.y() + offset.y() - barHalf.y()),
         QPointF(centerImage.x() + offset.x() + barHalf.x(), centerImage.y() + offset.y() + barHalf.y()));
+    painter.restore();
+}
+
+void MprSliceWidget::drawInstrumentDirectionCue(
+    QPainter& painter,
+    QPointF handleCenterImage,
+    QPointF directionImage,
+    QColor color)
+{
+    const double dirLength = std::hypot(directionImage.x(), directionImage.y());
+    if (dirLength <= 1.0e-6) {
+        return;
+    }
+
+    const QPointF directionUnit{
+        directionImage.x() / dirLength,
+        directionImage.y() / dirLength,
+    };
+    const QPointF normal{-directionUnit.y(), directionUnit.x()};
+    const QPointF tip{
+        handleCenterImage.x() - directionUnit.x() * 8.0,
+        handleCenterImage.y() - directionUnit.y() * 8.0,
+    };
+    const QPointF tailCenter{
+        tip.x() - directionUnit.x() * 16.0,
+        tip.y() - directionUnit.y() * 16.0,
+    };
+    const QPointF firstTail{
+        tailCenter.x() + normal.x() * 8.0,
+        tailCenter.y() + normal.y() * 8.0,
+    };
+    const QPointF secondTail{
+        tailCenter.x() - normal.x() * 8.0,
+        tailCenter.y() - normal.y() * 8.0,
+    };
+
+    painter.save();
+    QPen shadowPen(QColor(8, 10, 14, 210), 5.0);
+    shadowPen.setCapStyle(Qt::RoundCap);
+    shadowPen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(shadowPen);
+    painter.drawLine(firstTail, tip);
+    painter.drawLine(secondTail, tip);
+
+    QPen cuePen(color, 2.8);
+    cuePen.setCapStyle(Qt::RoundCap);
+    cuePen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(cuePen);
+    painter.drawLine(firstTail, tip);
+    painter.drawLine(secondTail, tip);
     painter.restore();
 }
 
@@ -1315,7 +1726,9 @@ void MprSliceWidget::paintEvent(QPaintEvent*)
     if (params.ok()) {
         const QPointF crosshair = patientToImagePoint(m_state->crosshairPatientMm);
         const auto lines = crosslines();
-        drawCrossline(painter, lines[0], QColor(255, 180, 0, 220), true);
+        const bool drawYellowLineDirectionCue =
+            m_plane == measurement::MprPlane::Axial || m_plane == measurement::MprPlane::Sagittal;
+        drawCrossline(painter, lines[0], QColor(255, 180, 0, 220), true, drawYellowLineDirectionCue);
         drawCrossline(painter, lines[1], QColor(0, 200, 255, 220), true);
         painter.setBrush(QColor(0, 255, 180, 220));
         painter.setPen(Qt::NoPen);
@@ -1369,19 +1782,12 @@ void MprSliceWidget::drawMeasurementOverlays(QPainter& painter)
 
 void MprSliceWidget::drawMeasurementAnnotation(QPainter& painter, const measurement::MeasurementVisibilityResult& result)
 {
-    const QColor base = result.selected ? QColor(255, 224, 96, 245) : QColor(120, 235, 190, 230);
-    const QColor textColor = result.selected ? QColor(255, 247, 204) : QColor(218, 255, 244);
-    QPen pen(base, result.selected ? 2.5 : 1.8);
-    pen.setCosmetic(true);
-    painter.setPen(pen);
-    painter.setBrush(Qt::NoBrush);
-
+    const QColor color = result.selected ? QColor("#ffdd57") : QColor("#4cc9f0");
+    const QSizeF bounds(static_cast<double>(m_image.width()), static_cast<double>(m_image.height()));
+    const bool fullDisplay = result.level == measurement::MeasurementVisibilityLevel::FullDisplay;
     const std::vector<measurement::Vec3d>* points = &result.fullWorldPointsPatientMm;
-    if (result.level == measurement::MeasurementVisibilityLevel::SectionIndicator) {
+    if (!fullDisplay) {
         points = &result.sectionWorldPointsPatientMm;
-        QPen sectionPen(QColor(255, 160, 80, 220), 1.6, Qt::DashLine);
-        sectionPen.setCosmetic(true);
-        painter.setPen(sectionPen);
     }
 
     std::vector<QPointF> imagePoints;
@@ -1391,39 +1797,33 @@ void MprSliceWidget::drawMeasurementAnnotation(QPainter& painter, const measurem
     }
 
     if (result.type == measurement::MeasurementType::Distance && imagePoints.size() >= 2) {
-        painter.drawLine(imagePoints[0], imagePoints[1]);
+        drawMeasurementPolyline(painter, imagePoints, color, fullDisplay ? 2.5 : 1.5);
+        drawMeasurementHandles(painter, imagePoints, color);
+        if (fullDisplay) {
+            drawMeasurementLabels(
+                painter,
+                bounds,
+                result.label,
+                result.measurementText,
+                result.displayText,
+                imagePoints.back(),
+                color);
+        }
     } else if (result.type == measurement::MeasurementType::Angle && imagePoints.size() >= 4) {
-        painter.drawLine(imagePoints[0], imagePoints[1]);
-        painter.drawLine(imagePoints[2], imagePoints[3]);
+        drawAngleMeasurement(painter, imagePoints, color, bounds);
+        if (fullDisplay) {
+            drawMeasurementLabels(
+                painter,
+                bounds,
+                result.label,
+                result.measurementText,
+                result.displayText,
+                angleLabelAnchor(imagePoints, bounds),
+                color);
+        }
     } else if (imagePoints.size() >= 2) {
-        for (size_t index = 1; index < imagePoints.size(); ++index) {
-            painter.drawLine(imagePoints[index - 1], imagePoints[index]);
-        }
-    }
-
-    painter.setBrush(QColor(18, 20, 24, 190));
-    for (QPointF point : imagePoints) {
-        painter.drawEllipse(point, 3.2, 3.2);
-    }
-
-    if (!result.displayText.empty() && !imagePoints.empty()) {
-        QPointF labelPoint = imagePoints.front();
-        for (QPointF point : imagePoints) {
-            labelPoint += point;
-        }
-        labelPoint /= static_cast<double>(imagePoints.size());
-        labelPoint += QPointF(6.0, -6.0);
-
-        const QString text = QString::fromStdString(result.displayText);
-        const QFontMetrics metrics(painter.font());
-        QRectF textRect(metrics.boundingRect(text));
-        textRect.adjust(-4.0, -2.0, 4.0, 2.0);
-        textRect.translate(labelPoint);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(18, 20, 24, 205));
-        painter.drawRoundedRect(textRect, 3.0, 3.0);
-        painter.setPen(textColor);
-        painter.drawText(textRect, Qt::AlignCenter, text);
+        drawMeasurementPolyline(painter, imagePoints, color, fullDisplay ? 2.5 : 1.5);
+        drawMeasurementHandles(painter, imagePoints, color);
     }
 }
 
@@ -1437,7 +1837,7 @@ void MprSliceWidget::drawMeasurementPreview(QPainter& painter)
     if (m_measurementHoverPatientMm.has_value()) {
         previewPoints.push_back(*m_measurementHoverPatientMm);
     }
-    if (previewPoints.size() < 2) {
+    if (previewPoints.empty()) {
         return;
     }
 
@@ -1447,20 +1847,56 @@ void MprSliceWidget::drawMeasurementPreview(QPainter& painter)
         imagePoints.push_back(patientToImagePoint(point));
     }
 
-    QPen pen(QColor(255, 220, 120, 230), 1.5, Qt::DashLine);
-    pen.setCosmetic(true);
-    painter.setPen(pen);
-    painter.setBrush(Qt::NoBrush);
-    if (m_measurementMode == measurement::MeasurementMode::Angle && imagePoints.size() >= 3) {
-        painter.drawLine(imagePoints[0], imagePoints[1]);
-        painter.drawLine(imagePoints[2], imagePoints.back());
-    } else {
-        painter.drawLine(imagePoints.front(), imagePoints.back());
+    if (m_measurementMode == measurement::MeasurementMode::Distance && imagePoints.size() != 2) {
+        return;
+    }
+    if (m_measurementMode == measurement::MeasurementMode::Angle && imagePoints.size() > 4) {
+        return;
     }
 
-    painter.setBrush(QColor(255, 220, 120, 210));
-    for (QPointF point : imagePoints) {
-        painter.drawEllipse(point, 2.5, 2.5);
+    QPen pen(Qt::white, 2.0);
+    pen.setCosmetic(true);
+    pen.setDashPattern({7.0, 5.0});
+    painter.save();
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    if (m_measurementMode == measurement::MeasurementMode::Angle) {
+        if (imagePoints.size() >= 2) {
+            painter.drawLine(imagePoints[0], imagePoints[1]);
+        }
+        if (imagePoints.size() >= 4) {
+            painter.drawLine(imagePoints[2], imagePoints[3]);
+        } else if (imagePoints.size() == 3) {
+            painter.drawLine(imagePoints[2], imagePoints[2]);
+        }
+    } else {
+        painter.drawLine(imagePoints[0], imagePoints[1]);
+    }
+    painter.restore();
+
+    const QColor accent("#4cc9f0");
+    drawMeasurementHandles(painter, imagePoints, accent);
+
+    QString previewLabel;
+    if (m_measurementMode == measurement::MeasurementMode::Distance && previewPoints.size() == 2) {
+        previewLabel = QString::fromStdString(
+            measurement::MeasurementAnnotation::makeDistance(previewPoints[0], previewPoints[1]).measurementText());
+    } else if (m_measurementMode == measurement::MeasurementMode::Angle) {
+        previewLabel = "Angle";
+        if (previewPoints.size() == 4) {
+            const auto annotation = measurement::MeasurementAnnotation::tryMakeAngle(
+                previewPoints[0],
+                previewPoints[1],
+                previewPoints[2],
+                previewPoints[3]);
+            if (annotation.has_value()) {
+                previewLabel = QString::fromStdString(annotation->measurementText());
+            }
+        }
+    }
+    if (!previewLabel.isEmpty() && !imagePoints.empty()) {
+        const QSizeF bounds(static_cast<double>(m_image.width()), static_cast<double>(m_image.height()));
+        drawMeasurementLabel(painter, bounds, previewLabel, imagePoints.back(), accent);
     }
 }
 
@@ -3415,8 +3851,9 @@ void MprPlanVerificationWindow::buildUi()
     m_loadDicomButton = new QPushButton("Load DICOM", workflowGroup);
     auto* resetViewsButton = new QPushButton("Reset Views", workflowGroup);
     auto* saveButton = new QPushButton("Save .mprproj", workflowGroup);
-    m_freeObliqueButton = new QPushButton("Free oblique: Off", workflowGroup);
+    m_freeObliqueButton = new QPushButton(m_freeObliqueMode ? "Free oblique: On" : "Free oblique: Off", workflowGroup);
     m_freeObliqueButton->setCheckable(true);
+    m_freeObliqueButton->setChecked(m_freeObliqueMode);
     loadGrid->addWidget(m_loadDicomButton, 0, 0, 1, 2);
     loadGrid->addWidget(resetViewsButton, 1, 0);
     loadGrid->addWidget(saveButton, 1, 1);
@@ -3711,10 +4148,17 @@ void MprPlanVerificationWindow::buildUi()
     connect(deleteMeasurement, &QPushButton::clicked, this, [this]() { deleteSelectedMeasurement(); });
     connect(clearMeasurementsButton, &QPushButton::clicked, this, [this]() { clearMeasurements(); });
     connect(m_measurementLabel, &QLineEdit::editingFinished, this, [this]() { renameSelectedMeasurement(); });
-    connect(m_measurementList, &QListWidget::currentRowChanged, this, [this](int) {
+    const auto measurementSelectionChanged = [this]() {
         if (const auto id = selectedMeasurementId()) {
             selectMeasurementById(*id);
+            jumpToMeasurement(*id);
         }
+    };
+    connect(m_measurementList, &QListWidget::currentRowChanged, this, [measurementSelectionChanged](int) {
+        measurementSelectionChanged();
+    });
+    connect(m_measurementList, &QListWidget::itemClicked, this, [measurementSelectionChanged](QListWidgetItem*) {
+        measurementSelectionChanged();
     });
     connect(addPin, &QPushButton::clicked, this, [this]() { addInstrument(measurement::InstrumentType::GuidePin); });
     connect(addScrew, &QPushButton::clicked, this, [this]() { addInstrument(measurement::InstrumentType::PedicleScrew); });
@@ -3727,21 +4171,19 @@ void MprPlanVerificationWindow::buildUi()
         setDrrPlacementMode(measurement::InstrumentType::PedicleScrew);
     });
     connect(m_drrCancelButton, &QPushButton::clicked, this, [this]() { cancelDrrPlacement(); });
-    const auto instrumentSelectionChanged = [this](bool forceJump) {
+    const auto instrumentSelectionChanged = [this]() {
         syncPlacementSelectionFromUi();
-        const bool jumped = forceJump
-            ? jumpToInstrumentPlanningPose(selectedInstrumentId())
-            : jumpToInstrumentPlanningPose(selectedInstrumentId());
+        const bool jumped = jumpToInstrumentPlanningPose(selectedInstrumentId());
         syncSpinBoxesFromSelectedInstrument();
         if (!jumped) {
             refreshAll(true);
         }
     };
     connect(m_instrumentList, &QListWidget::currentRowChanged, this, [instrumentSelectionChanged]() {
-        instrumentSelectionChanged(false);
+        instrumentSelectionChanged();
     });
     connect(m_instrumentList, &QListWidget::itemClicked, this, [instrumentSelectionChanged](QListWidgetItem*) {
-        instrumentSelectionChanged(true);
+        instrumentSelectionChanged();
     });
     connect(m_patientPostureCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
         const bool prone = m_patientPostureCombo != nullptr
@@ -4257,6 +4699,9 @@ void MprPlanVerificationWindow::setFreeObliqueMode(bool enabled)
     if (m_freeObliqueMode == enabled) {
         if (m_freeObliqueButton != nullptr) {
             m_freeObliqueButton->setText(enabled ? "Free oblique: On" : "Free oblique: Off");
+            if (m_freeObliqueButton->isChecked() != enabled) {
+                m_freeObliqueButton->setChecked(enabled);
+            }
         }
         return;
     }
@@ -4405,12 +4850,19 @@ void MprPlanVerificationWindow::refreshMeasurementList()
     int selectedRow = -1;
     int row = 0;
     for (const measurement::MeasurementAnnotation& annotation : m_measurementStore.all()) {
-        const QString itemText = QString("#%1  %2  %3")
-                                     .arg(annotation.id.value())
-                                     .arg(QString::fromUtf8(measurementTypeName(annotation.type)))
-                                     .arg(QString::fromStdString(annotation.displayText()));
+        const QString typeText = QString::fromUtf8(measurementTypeName(annotation.type));
+        const QString value = QString::fromStdString(annotation.measurementText());
+        const QString primary = annotation.label.empty()
+            ? value
+            : QString::fromStdString(annotation.label);
+        const QString secondary = annotation.label.empty()
+            ? typeText
+            : QString("%1  %2").arg(typeText, value);
+        const QString itemText = QString("%1\n%2").arg(primary, secondary);
         auto* item = new QListWidgetItem(itemText, m_measurementList);
         item->setData(Qt::UserRole, static_cast<qlonglong>(annotation.id.value()));
+        item->setToolTip(QString("#%1  %2").arg(annotation.id.value()).arg(typeText));
+        item->setSizeHint(QSize(0, 54));
         if (annotation.id == m_selectedMeasurementId) {
             selectedRow = row;
         }
@@ -4525,6 +4977,26 @@ void MprPlanVerificationWindow::selectMeasurementById(measurement::MeasurementId
     }
     refreshMeasurementOverlays();
     refreshMeasurementList();
+}
+
+void MprPlanVerificationWindow::jumpToMeasurement(measurement::MeasurementId id)
+{
+    if (!id.isValid() || !m_volume.image) {
+        return;
+    }
+
+    const auto annotation = m_measurementStore.find(id);
+    const auto anchor = m_measurementStore.anchorWorldPoint(id);
+    if (!annotation.has_value() || !anchor.has_value() || !isFiniteVec(*anchor)) {
+        statusBar()->showMessage("Selected measurement cannot be located.", 4000);
+        return;
+    }
+
+    if (const auto plane = planeForMeasurementViewType(annotation->createdViewType)) {
+        activateMprPlane(*plane);
+    }
+    setCrosshairPatient(*anchor);
+    statusBar()->showMessage(QString("Measurement #%1 located.").arg(id.value()), 3000);
 }
 
 void MprPlanVerificationWindow::deleteSelectedMeasurement()
@@ -5451,9 +5923,7 @@ measurement::Vec3d MprPlanVerificationWindow::crosshairLineDirectionPatient(
     if (viewPlane == linePlane) {
         return {};
     }
-    return measurement::normalize(measurement::cross(
-        m_planeFrames[planeIndex(viewPlane)].normalPatientUnit,
-        m_planeFrames[planeIndex(linePlane)].normalPatientUnit));
+    return stableCrosslineDirectionPatient(&m_volume, m_planeFrames, viewPlane, linePlane);
 }
 
 measurement::Vec3d MprPlanVerificationWindow::activeCrosshairLineDirectionPatient() const
@@ -5468,7 +5938,7 @@ measurement::Vec3d MprPlanVerificationWindow::activeCrosshairLineDirectionPatien
     if (measurement::length(direction) <= 1.0e-6) {
         direction = m_planeFrames[planeIndex(m_activeMprPlane)].horizontalPatientUnit;
     }
-    return measurement::normalize(direction);
+    return measurement::normalize(direction * -1.0);
 }
 
 measurement::ProjectManifest MprPlanVerificationWindow::makeManifest() const

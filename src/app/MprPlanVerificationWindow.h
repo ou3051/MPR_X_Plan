@@ -142,9 +142,10 @@ private:
     [[nodiscard]] std::pair<QPointF, QPointF> crosslineHandleCenters(const CrosslineInfo& line) const;
     [[nodiscard]] std::optional<measurement::MeasurementPlane> currentMeasurementPlane() const;
     [[nodiscard]] std::optional<measurement::Vec3d> patientPointFromWidgetPosition(const QPoint& position) const;
-    void drawCrossline(QPainter& painter, const CrosslineInfo& line, QColor color, bool drawHandle);
+    void drawCrossline(QPainter& painter, const CrosslineInfo& line, QColor color, bool drawHandle, bool drawDirectionCue = false);
     void drawCrosslineOrientationLabels(QPainter& painter, const CrosslineInfo& line, QColor color);
     void drawRotationHandle(QPainter& painter, QPointF centerImage, QPointF directionImage, QColor color);
+    void drawInstrumentDirectionCue(QPainter& painter, QPointF handleCenterImage, QPointF directionImage, QColor color);
     void drawMeasurementOverlays(QPainter& painter);
     void drawMeasurementAnnotation(QPainter& painter, const measurement::MeasurementVisibilityResult& result);
     void drawMeasurementPreview(QPainter& painter);
@@ -298,6 +299,7 @@ private:
     void handleMeasurementHoverChanged(measurement::MprPlane plane, std::optional<measurement::Vec3d> patientPoint);
     void cancelPendingMeasurement();
     void selectMeasurementById(measurement::MeasurementId id);
+    void jumpToMeasurement(measurement::MeasurementId id);
     void deleteSelectedMeasurement();
     void clearMeasurements();
     void renameSelectedMeasurement();
@@ -356,7 +358,7 @@ private:
     measurement::MeasurementMode m_measurementMode = measurement::MeasurementMode::Navigate;
     int m_nextInstrumentIndex = 1;
     bool m_syncingControls = false;
-    bool m_freeObliqueMode = false;
+    bool m_freeObliqueMode = true;
     bool m_instrumentEditActive = false;
     std::string m_editingInstrumentId;
     measurement::InstrumentPatch m_editOriginalPatch;
