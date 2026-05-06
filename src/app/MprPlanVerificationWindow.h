@@ -147,6 +147,7 @@ private:
 
     measurement::MprPlane m_plane = measurement::MprPlane::Axial;
     const measurement::VolumeData* m_volume = nullptr;
+    std::string m_volumeSignature;
     const measurement::MprViewState* m_state = nullptr;
     const std::array<measurement::MprSliceFrame, 3>* m_linkedPlaneFrames = nullptr;
     const measurement::SurgicalPlan* m_plan = nullptr;
@@ -231,18 +232,19 @@ class XrayDisplayWidget;
 
 class MprPlanVerificationWindow final : public QMainWindow {
 public:
-    explicit MprPlanVerificationWindow(QString startupDicomFolder = {}, QWidget* parent = nullptr);
+    explicit MprPlanVerificationWindow(QWidget* parent = nullptr);
 
 private:
     void buildUi();
-    void loadStartupVolume(const QString& startupDicomFolder);
+    void loadStartupVolume();
     void loadSyntheticVolume();
     void loadDicomFolder();
     [[nodiscard]] bool tryLoadDicomFolder(const QString& folder, QString* failureMessage = nullptr);
+    void activateLoadedVolumeData();
     void saveProject();
-    void resetCrosshairToVolumeCenter();
+    void resetCrosshairToVolumeCenter(bool refreshViews = true);
     void setCrosshairPatient(measurement::Vec3d patient);
-    void setCrosshairVoxel(measurement::Vec3d voxel);
+    void setCrosshairVoxel(measurement::Vec3d voxel, bool refreshViews = true);
     void setWindowLevel(double centerHu, double widthHu);
     void resetAllViews();
     void resetPatientPositionControls();
@@ -329,6 +331,7 @@ private:
     std::array<QDoubleSpinBox*, 2> m_drrGamma{};
     std::array<QDoubleSpinBox*, 2> m_drrHuOffset{};
     std::array<QDoubleSpinBox*, 2> m_drrHuScale{};
+    QPushButton* m_loadDicomButton = nullptr;
     QPushButton* m_drrPinButton = nullptr;
     QPushButton* m_drrScrewButton = nullptr;
     QPushButton* m_drrCancelButton = nullptr;

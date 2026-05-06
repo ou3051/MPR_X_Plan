@@ -369,6 +369,39 @@ TEST(DicomVolumeLoaderTests, LoadFolder_BuildsVolumeMetadataHuAndStableHash)
     EXPECT_NE(volume.dataHash, changed.value().dataHash);
 }
 
+TEST(DicomVolumeLoaderTests, LoadFolder_CompatibleModeKeepsLongestContinuousSliceRun)
+{
+    ScopedTempDir dir;
+    SliceSpec first;
+    SliceSpec second = first;
+    SliceSpec third = first;
+    SliceSpec outlier = first;
+    second.imagePositionPatientMm[2] += 1.5;
+    third.imagePositionPatientMm[2] += 3.0;
+    outlier.imagePositionPatientMm[2] += 9.0;
+    first.pixels = {500, 501, 502, 503, 504, 505};
+    second.pixels = {506, 507, 508, 509, 510, 511};
+    third.pixels = {512, 513, 514, 515, 516, 517};
+    outlier.pixels = {800, 801, 802, 803, 804, 805};
+
+    writeSliceFile(dir.path() / "slice_1.dcm", first, 1);
+    writeSliceFile(dir.path() / "slice_2.dcm", second, 2);
+    writeSliceFile(dir.path() / "slice_3.dcm", third, 3);
+    writeSliceFile(dir.path() / "slice_4_gap.dcm", outlier, 4);
+
+    DicomVolumeLoader loader;
+    const auto loaded = loader.loadFolder(dir.path());
+
+    ASSERT_TRUE(loaded.ok()) << loaded.error().code << " :: " << loaded.error().detail;
+    const VolumeData& volume = loaded.value();
+    EXPECT_EQ(volume.metadata.dimensions.z, 3);
+    EXPECT_TRUE(nearlyEqual(volume.metadata.spacingMm, Vec3d{0.6, 0.8, 1.5}));
+    ASSERT_TRUE(volume.image);
+    EXPECT_EQ(volume.image->voxelHu(0, 0, 0), 0);
+    EXPECT_EQ(volume.image->voxelHu(0, 0, 1), 12);
+    EXPECT_EQ(volume.image->voxelHu(0, 0, 2), 24);
+}
+
 TEST(DicomVolumeLoaderTests, LoadFolder_DefaultsPatientPositionToHfsWhenMissing)
 {
     ScopedTempDir dir;

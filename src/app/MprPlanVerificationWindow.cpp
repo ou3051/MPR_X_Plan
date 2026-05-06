@@ -31,7 +31,6 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QStatusBar>
-#include <QStringList>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -98,20 +97,7 @@ constexpr double kDrrViewportPaddingScale = 1.02;
 constexpr int kMaxDrrDetectorSamples = 4096;
 constexpr double kPi = 3.14159265358979323846;
 constexpr auto kDefaultDicomFolder = R"(D:\code\dicom)";
-constexpr auto kFallbackValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_332)";
-
-void appendUniqueCandidate(QStringList& candidates, const QString& folder)
-{
-    const QString trimmed = folder.trimmed();
-    if (trimmed.isEmpty()) {
-        return;
-    }
-
-    const QString normalized = QDir::toNativeSeparators(QDir::cleanPath(trimmed));
-    if (!candidates.contains(normalized, Qt::CaseInsensitive)) {
-        candidates.push_back(normalized);
-    }
-}
+constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_332)";
 
 [[nodiscard]] QString summarizeLoadFailure(const QString& folder, const measurement::ErrorInfo& error)
 {
@@ -619,11 +605,22 @@ MprSliceWidget::MprSliceWidget(measurement::MprPlane plane, QWidget* parent)
 
 void MprSliceWidget::setVolume(const measurement::VolumeData* volume)
 {
-    if (m_volume != volume) {
+    const std::string nextSignature = volume != nullptr && volume->image
+        ? volumeGeometrySignature(*volume, true)
+        : std::string{};
+
+    // The main window owns one stable VolumeData object. Loading DICOM replaces
+    // its contents in-place, so pointer comparison alone cannot tell the slice
+    // widgets that synthetic voxels/geometries have been replaced.
+    if (m_volume != volume || m_volumeSignature != nextSignature) {
         m_pan = {};
         m_zoom = 1.0;
+        m_dragMode = DragMode::None;
+        m_lastRotationAngleRad = 0.0;
+        m_resliceAdapter = measurement::VtkMprResliceAdapter();
     }
     m_volume = volume;
+    m_volumeSignature = nextSignature;
 }
 
 measurement::MprPlane MprSliceWidget::plane() const
@@ -2270,6 +2267,26 @@ public:
 
     void setVolume(const measurement::VolumeData* volume)
     {
+        const std::string nextSignature = volume != nullptr && volume->image
+            ? volumeGeometrySignature(*volume, true)
+            : std::string{};
+
+        // DRR engines cache the uploaded CT. The VolumeData address stays the
+        // same across synthetic/DICOM loads, so invalidate by voxel+geometry
+        // signature before the next render.
+        if (m_volume != volume || nextSignature != m_cachedVolumeSignature) {
+            m_cachedVolumeSignature.clear();
+            m_cudaVolumeReady = false;
+            m_cpuVolumeReady = false;
+            m_lineIntegral.clear();
+            m_lineIntegralWidth = 0;
+            m_lineIntegralHeight = 0;
+            m_scalarImage = nullptr;
+            m_image = {};
+            m_dragMode = DragMode::None;
+            m_dragInstrumentId.clear();
+            m_dragTarget = DrrInteractionTarget::None;
+        }
         m_volume = volume;
     }
 
@@ -3086,13 +3103,13 @@ private:
     bool m_cpuVolumeReady = false;
 };
 
-MprPlanVerificationWindow::MprPlanVerificationWindow(QString startupDicomFolder, QWidget* parent)
+MprPlanVerificationWindow::MprPlanVerificationWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     m_planController = std::make_unique<measurement::InstrumentPlanController>(m_plan);
     m_placementController = std::make_unique<measurement::InstrumentPlacementController>(m_plan);
     buildUi();
-    loadStartupVolume(std::move(startupDicomFolder));
+    loadStartupVolume();
 }
 
 void MprPlanVerificationWindow::buildUi()
@@ -3128,16 +3145,14 @@ void MprPlanVerificationWindow::buildUi()
     auto* controls = new QVBoxLayout(controlPanel);
 
     auto* loadGrid = new QGridLayout();
-    auto* syntheticButton = new QPushButton("Synthetic phantom", controlPanel);
-    auto* dicomButton = new QPushButton("Load DICOM", controlPanel);
+    m_loadDicomButton = new QPushButton("Load DICOM", controlPanel);
     auto* resetViewsButton = new QPushButton("Reset Views", controlPanel);
     auto* saveButton = new QPushButton("Save .mprproj", controlPanel);
     m_freeObliqueButton = new QPushButton("Free oblique: Off", controlPanel);
     m_freeObliqueButton->setCheckable(true);
     // Keep the command buttons compact so the right-side control columns can stay
     // near one third of the window without forcing the image panels to shrink.
-    loadGrid->addWidget(syntheticButton, 0, 0);
-    loadGrid->addWidget(dicomButton, 0, 1);
+    loadGrid->addWidget(m_loadDicomButton, 0, 0, 1, 2);
     loadGrid->addWidget(resetViewsButton, 1, 0);
     loadGrid->addWidget(saveButton, 1, 1);
     loadGrid->addWidget(m_freeObliqueButton, 2, 0, 1, 2);
@@ -3177,6 +3192,9 @@ void MprPlanVerificationWindow::buildUi()
     crosshairLayout->addWidget(m_zSlider, 2, 1);
     crosshairLayout->addWidget(m_zValueLabel, 2, 2);
     controls->addWidget(crosshairGroup);
+    // Keep the controls wired for programmatic slice changes, but free the
+    // right panel height for the instrument planning list.
+    crosshairGroup->setVisible(false);
 
     auto* instrumentGroup = new QGroupBox("Plan instruments", controlPanel);
     auto* instrumentLayout = new QVBoxLayout(instrumentGroup);
@@ -3345,8 +3363,7 @@ void MprPlanVerificationWindow::buildUi()
     m_apXrayView->setInstrumentDraggedCallback(drrInstrumentDragged);
     m_latXrayView->setInstrumentDraggedCallback(drrInstrumentDragged);
 
-    connect(syntheticButton, &QPushButton::clicked, this, [this]() { loadSyntheticVolume(); });
-    connect(dicomButton, &QPushButton::clicked, this, [this]() { loadDicomFolder(); });
+    connect(m_loadDicomButton, &QPushButton::clicked, this, [this]() { loadDicomFolder(); });
     connect(resetViewsButton, &QPushButton::clicked, this, [this]() { resetAllViews(); });
     connect(saveButton, &QPushButton::clicked, this, [this]() { saveProject(); });
     connect(m_freeObliqueButton, &QPushButton::toggled, this, [this](bool checked) { setFreeObliqueMode(checked); });
@@ -3469,48 +3486,32 @@ void MprPlanVerificationWindow::buildUi()
 void MprPlanVerificationWindow::loadSyntheticVolume()
 {
     m_volume = makeSyntheticVolume();
-    resetPatientPositionControls();
-    initializePlaneFrames();
-    resetCrosshairToVolumeCenter();
-    refreshAll(true);
+    if (m_loadDicomButton != nullptr) {
+        m_loadDicomButton->setEnabled(true);
+    }
+    activateLoadedVolumeData();
 }
 
-void MprPlanVerificationWindow::loadStartupVolume(const QString& startupDicomFolder)
+void MprPlanVerificationWindow::loadStartupVolume()
 {
-    QStringList candidates;
-    appendUniqueCandidate(candidates, startupDicomFolder);
-    appendUniqueCandidate(candidates, qEnvironmentVariable("MEASUREMENT_MPR_DICOM_FOLDER"));
-    appendUniqueCandidate(candidates, QString::fromUtf8(kDefaultDicomFolder));
-    appendUniqueCandidate(candidates, QString::fromUtf8(kFallbackValidatedDicomFolder));
-
-    QStringList failures;
-    for (const QString& candidate : candidates) {
-        QString failureMessage;
-        if (tryLoadDicomFolder(candidate, &failureMessage)) {
-            QString startupMessage = QString("Loaded startup DICOM: %1").arg(candidate);
-            if (!failures.isEmpty()) {
-                startupMessage += QString(" (after fallback; previous failure: %1)").arg(failures.constLast());
-            }
-            statusBar()->showMessage(startupMessage, 15000);
-            return;
-        }
-        failures.push_back(failureMessage);
-    }
-
+    // Startup should be fast and deterministic: show the built-in phantom first
+    // and leave DICOM loading as an explicit user action.
     loadSyntheticVolume();
-    const QString failureSuffix = failures.isEmpty()
-        ? QString("No startup DICOM folder was configured.")
-        : QString("Last startup DICOM failure: %1").arg(failures.constLast());
-    statusBar()->showMessage(
-        QString("Loaded synthetic phantom. %1").arg(failureSuffix),
-        15000);
+    statusBar()->showMessage("Loaded synthetic phantom.", 6000);
 }
 
 void MprPlanVerificationWindow::loadDicomFolder()
 {
-    const QString initialDirectory = QFileInfo(QString::fromStdString(m_volume.sourceFolder)).isDir()
-        ? QString::fromStdString(m_volume.sourceFolder)
-        : QString::fromUtf8(kDefaultDicomFolder);
+    QString initialDirectory = QString::fromStdString(m_volume.sourceFolder);
+    if (!QFileInfo(initialDirectory).isDir()) {
+        const QString validatedDirectory = QString::fromUtf8(kValidatedDicomFolder);
+        initialDirectory = QFileInfo(validatedDirectory).isDir()
+            ? validatedDirectory
+            : QString::fromUtf8(kDefaultDicomFolder);
+    }
+    if (!QFileInfo(initialDirectory).isDir()) {
+        initialDirectory = QDir::homePath();
+    }
     const QString folder = QFileDialog::getExistingDirectory(
         this,
         "Load CT DICOM folder",
@@ -3522,9 +3523,13 @@ void MprPlanVerificationWindow::loadDicomFolder()
     QString failureMessage;
     if (!tryLoadDicomFolder(folder, &failureMessage)) {
         statusBar()->showMessage(failureMessage, 8000);
+        QMessageBox::warning(this, "Load DICOM failed", failureMessage);
         return;
     }
 
+    if (m_loadDicomButton != nullptr) {
+        m_loadDicomButton->setEnabled(false);
+    }
     statusBar()->showMessage(QString("Loaded DICOM: %1").arg(QDir::toNativeSeparators(folder)), 6000);
 }
 
@@ -3540,11 +3545,76 @@ bool MprPlanVerificationWindow::tryLoadDicomFolder(const QString& folder, QStrin
     }
 
     m_volume = loaded.value();
+    activateLoadedVolumeData();
+    return true;
+}
+
+void MprPlanVerificationWindow::activateLoadedVolumeData()
+{
+    // DRR placement lines and active drags are detector-space state from the
+    // previous volume. Drop them before publishing the new patient geometry.
+    m_drrPlacementType.reset();
+    m_pendingDrrLines = {};
+    if (m_drrPinButton != nullptr) {
+        const bool blocked = m_drrPinButton->blockSignals(true);
+        m_drrPinButton->setChecked(false);
+        m_drrPinButton->blockSignals(blocked);
+    }
+    if (m_drrScrewButton != nullptr) {
+        const bool blocked = m_drrScrewButton->blockSignals(true);
+        m_drrScrewButton->setChecked(false);
+        m_drrScrewButton->blockSignals(blocked);
+    }
+
     resetPatientPositionControls();
     initializePlaneFrames();
-    resetCrosshairToVolumeCenter();
+    resetCrosshairToVolumeCenter(false);
+    syncPlaneFrameOrigins();
+    syncSlidersFromCrosshair();
+    syncPerViewStates();
+
+    const std::string selectedId = selectedInstrumentId();
+    const std::array<IMprSliceView*, 3> views{m_axialView, m_sagittalView, m_coronalView};
+    for (size_t index = 0; index < views.size(); ++index) {
+        IMprSliceView* view = views[index];
+        if (view == nullptr) {
+            continue;
+        }
+        view->setVolume(&m_volume);
+        view->setLinkedPlaneFrames(&m_planeFrames);
+        view->setState(&m_viewStates[index]);
+        view->setPlan(&m_plan);
+        view->setSelectedInstrumentId(selectedId);
+    }
+
+    if (m_sceneView != nullptr) {
+        m_sceneView->setVolume(&m_volume);
+        m_sceneView->setPlan(&m_plan);
+        m_sceneView->setSelectedInstrumentId(selectedId);
+        m_sceneView->resetCamera();
+    }
+
+    const std::array<std::optional<DrrDetectorLine>, 2> noConstraints{};
+    if (m_apXrayView != nullptr) {
+        m_apXrayView->setVolume(&m_volume);
+        m_apXrayView->setPlan(&m_plan);
+        m_apXrayView->setSelectedInstrumentId(selectedId);
+        m_apXrayView->setDrrSettings(drrSettingsFromControls(measurement::XrayPreset::AP));
+        m_apXrayView->setPlacementActive(false);
+        m_apXrayView->setPendingLine(std::nullopt);
+        m_apXrayView->setPlacementConstraints(noConstraints);
+    }
+    if (m_latXrayView != nullptr) {
+        m_latXrayView->setVolume(&m_volume);
+        m_latXrayView->setPlan(&m_plan);
+        m_latXrayView->setSelectedInstrumentId(selectedId);
+        m_latXrayView->setDrrSettings(drrSettingsFromControls(measurement::XrayPreset::LAT));
+        m_latXrayView->setPlacementActive(false);
+        m_latXrayView->setPendingLine(std::nullopt);
+        m_latXrayView->setPlacementConstraints(noConstraints);
+    }
+
     refreshAll(true);
-    return true;
 }
 
 void MprPlanVerificationWindow::saveProject()
@@ -3561,17 +3631,17 @@ void MprPlanVerificationWindow::saveProject()
     statusBar()->showMessage("Project saved", 4000);
 }
 
-void MprPlanVerificationWindow::resetCrosshairToVolumeCenter()
+void MprPlanVerificationWindow::resetCrosshairToVolumeCenter(bool refreshViews)
 {
     const measurement::Size3i dims = m_volume.metadata.dimensions;
     setCrosshairVoxel({
         static_cast<double>(dims.x - 1) * 0.5,
         static_cast<double>(dims.y - 1) * 0.5,
         static_cast<double>(dims.z - 1) * 0.5,
-    });
+    }, refreshViews);
 }
 
-void MprPlanVerificationWindow::setCrosshairVoxel(measurement::Vec3d voxel)
+void MprPlanVerificationWindow::setCrosshairVoxel(measurement::Vec3d voxel, bool refreshViews)
 {
     if (!m_volume.image || !isFiniteVec(voxel)) {
         return;
@@ -3585,6 +3655,9 @@ void MprPlanVerificationWindow::setCrosshairVoxel(measurement::Vec3d voxel)
     voxel.z = clampDouble(voxel.z, 0.0, static_cast<double>(dims.z - 1));
     m_mprState.crosshairPatientMm = measurement::voxelToPatient(m_volume.transform, voxel);
     if (!isFiniteVec(m_mprState.crosshairPatientMm)) {
+        return;
+    }
+    if (!refreshViews) {
         return;
     }
     const auto placementResult = m_placementController->onCrosshairChanged(m_mprState.crosshairPatientMm);
@@ -4347,7 +4420,6 @@ void MprPlanVerificationWindow::refreshStatus()
                                .arg(QString::fromStdString(m_volume.patientPositionCode))
                                .arg(QString::fromStdString(m_volume.sourceFolder)));
 
-    const measurement::Vec3d voxel = measurement::patientToVoxel(m_volume.transform, m_mprState.crosshairPatientMm);
     const QString editMode = m_instrumentEditActive
         ? QString("editing %1").arg(QString::fromStdString(m_editingInstrumentId))
         : QString("off");
@@ -4358,9 +4430,7 @@ void MprPlanVerificationWindow::refreshStatus()
             ? " (AP fixed, draw constrained LAT)"
             : " (draw AP first)";
     }
-    m_statusLabel->setText(QString("Crosshair patient %1\nCrosshair voxel %2\nActive view: %3\nMPR mode: %4\nInstrument edit: %5\nDRR placement: %6\nPlan instruments: %7")
-                               .arg(vecText(m_mprState.crosshairPatientMm))
-                               .arg(vecText(voxel))
+    m_statusLabel->setText(QString("Active view: %1\nMPR mode: %2\nInstrument edit: %3\nDRR placement: %4\nPlan instruments: %5")
                                .arg(QString::fromUtf8(planeTitle(m_activeMprPlane)))
                                .arg(m_freeObliqueMode ? "Free oblique" : "Orthogonal")
                                .arg(editMode)

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
@@ -29,6 +30,7 @@ namespace {
 constexpr double kDirectionTolerance = 1.0e-5;
 constexpr double kSpacingTolerance = 1.0e-4;
 constexpr double kProjectionTolerance = 1.0e-4;
+constexpr double kCompatibleSpacingToleranceMm = 0.05;
 
 class DenseHuVolume final : public IImageVolume {
 public:
@@ -494,6 +496,9 @@ template <typename T>
     return Result<std::vector<DicomSliceInfo>>::success(std::move(slices));
 }
 
+[[nodiscard]] std::optional<double> modalSliceSpacingMm(const std::vector<DicomSliceInfo>& slices);
+[[nodiscard]] bool keepLongestCompatibleSliceRun(std::vector<DicomSliceInfo>& slices, double spacingMm);
+
 [[nodiscard]] Result<void> validateAndSortSlices(std::vector<DicomSliceInfo>& slices)
 {
     const std::string seriesUid = slices.front().seriesUid;
@@ -594,18 +599,113 @@ template <typename T>
             true);
     }
 
+    bool spacingConsistent = true;
     for (size_t index = 1; index < slices.size(); ++index) {
         const double delta = slices[index].sliceProjectionMm - slices[index - 1].sliceProjectionMm;
         if (!nearlyEqual(delta, expectedSpacing, kSpacingTolerance)) {
-            return voidFailure(
-                "DICOM_INCONSISTENT_GEOMETRY",
-                "Slice spacing is inconsistent across the CT stack.",
-                slices[index].path.string() + " :: delta=" + formatDouble(delta),
-                true);
+            spacingConsistent = false;
+            break;
+        }
+    }
+
+    if (!spacingConsistent) {
+        const auto compatibleSpacing = modalSliceSpacingMm(slices);
+        if (compatibleSpacing.has_value() && keepLongestCompatibleSliceRun(slices, *compatibleSpacing)) {
+            return validateAndSortSlices(slices);
+        }
+
+        for (size_t index = 1; index < slices.size(); ++index) {
+            const double delta = slices[index].sliceProjectionMm - slices[index - 1].sliceProjectionMm;
+            if (!nearlyEqual(delta, expectedSpacing, kSpacingTolerance)) {
+                return voidFailure(
+                    "DICOM_INCONSISTENT_GEOMETRY",
+                    "Slice spacing is inconsistent across the CT stack.",
+                    slices[index].path.string() + " :: delta=" + formatDouble(delta),
+                    true);
+            }
         }
     }
 
     return Result<void>::success();
+}
+
+[[nodiscard]] std::optional<double> modalSliceSpacingMm(const std::vector<DicomSliceInfo>& slices)
+{
+    if (slices.size() < 2U) {
+        return std::nullopt;
+    }
+
+    std::vector<double> deltas;
+    deltas.reserve(slices.size() - 1U);
+    for (size_t index = 1; index < slices.size(); ++index) {
+        const double delta = slices[index].sliceProjectionMm - slices[index - 1].sliceProjectionMm;
+        if (delta > kProjectionTolerance) {
+            deltas.push_back(delta);
+        }
+    }
+    if (deltas.empty()) {
+        return std::nullopt;
+    }
+    std::sort(deltas.begin(), deltas.end());
+
+    double bestSpacing = deltas.front();
+    size_t bestCount = 0;
+    size_t index = 0;
+    while (index < deltas.size()) {
+        const double seed = deltas[index];
+        double sum = 0.0;
+        size_t count = 0;
+        while (index < deltas.size() && std::abs(deltas[index] - seed) <= kCompatibleSpacingToleranceMm) {
+            sum += deltas[index];
+            ++count;
+            ++index;
+        }
+        if (count > bestCount) {
+            bestCount = count;
+            bestSpacing = sum / static_cast<double>(count);
+        }
+    }
+    return bestSpacing;
+}
+
+[[nodiscard]] bool keepLongestCompatibleSliceRun(std::vector<DicomSliceInfo>& slices, double spacingMm)
+{
+    if (slices.size() < 3U || spacingMm <= kProjectionTolerance) {
+        return false;
+    }
+
+    size_t bestStart = 0;
+    size_t bestCount = 1;
+    size_t currentStart = 0;
+    size_t currentCount = 1;
+    for (size_t index = 1; index < slices.size(); ++index) {
+        const double delta = slices[index].sliceProjectionMm - slices[index - 1].sliceProjectionMm;
+        if (std::abs(delta - spacingMm) <= kCompatibleSpacingToleranceMm) {
+            ++currentCount;
+        } else {
+            if (currentCount > bestCount) {
+                bestStart = currentStart;
+                bestCount = currentCount;
+            }
+            currentStart = index;
+            currentCount = 1;
+        }
+    }
+    if (currentCount > bestCount) {
+        bestStart = currentStart;
+        bestCount = currentCount;
+    }
+
+    if (bestCount < 2U || bestCount == slices.size()) {
+        return false;
+    }
+
+    // Compatibility mode: retain the longest physically continuous stack and
+    // ignore slices separated by large gaps. This keeps a single CT series
+    // usable without inventing missing anatomy or resampling voxel data.
+    slices.erase(slices.begin() + static_cast<std::ptrdiff_t>(bestStart + bestCount), slices.end());
+    slices.erase(slices.begin(), slices.begin() + static_cast<std::ptrdiff_t>(bestStart));
+    return true;
 }
 
 [[nodiscard]] double computeSliceSpacingMm(const std::vector<DicomSliceInfo>& slices)

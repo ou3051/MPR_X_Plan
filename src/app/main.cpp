@@ -1,7 +1,6 @@
 #include "MprPlanVerificationWindow.h"
 
 #include <QApplication>
-#include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QSurfaceFormat>
 
@@ -19,14 +18,9 @@ int main(int argc, char* argv[])
     parser.addHelpOption();
     parser.addVersionOption();
 
-    QCommandLineOption dicomFolderOption(
-        "dicom-folder",
-        "Load a CT DICOM folder on startup.",
-        "path");
-    parser.addOption(dicomFolderOption);
     parser.process(app);
 
-    measurement_app::MprPlanVerificationWindow window(parser.value(dicomFolderOption));
+    measurement_app::MprPlanVerificationWindow window;
     window.show();
     return QApplication::exec();
 }
