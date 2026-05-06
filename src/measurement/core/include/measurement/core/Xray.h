@@ -44,6 +44,8 @@ struct DrrRenderSettings {
     double windowCenter = 0.0;
     double windowWidth = 1.0;
     double gamma = 1.0;
+    double huOffset = 0.0;
+    double huScale = 1.0;
 };
 
 struct DrrImage {

@@ -2,7 +2,7 @@
 
 文档状态：草案
 版本：v0.1
-日期：2026-05-03
+日期：2026-05-04
 接口来源：`src/measurement/*/include`
 
 ## 1. 接口边界原则
@@ -63,12 +63,31 @@ struct Mat4d {
 ```cpp
 namespace measurement {
 
+inline constexpr std::string_view kErrorDicomFolderNotFound = "DICOM_FOLDER_NOT_FOUND";
+inline constexpr std::string_view kErrorDicomDependencyMissing = "DICOM_DEPENDENCY_MISSING";
+inline constexpr std::string_view kErrorDicomEmptyFolder = "DICOM_EMPTY_FOLDER";
+inline constexpr std::string_view kErrorDicomNoCtSeries = "DICOM_NO_CT_SERIES";
+inline constexpr std::string_view kErrorDicomMultiSeriesUnsupported = "DICOM_MULTI_SERIES_UNSUPPORTED";
+inline constexpr std::string_view kErrorDicomMissingTag = "DICOM_MISSING_TAG";
+inline constexpr std::string_view kErrorDicomInconsistentGeometry = "DICOM_INCONSISTENT_GEOMETRY";
+inline constexpr std::string_view kErrorDicomImageBuildFailed = "DICOM_IMAGE_BUILD_FAILED";
+
+inline constexpr std::string_view kErrorVolumeInvalidMetadata = "VOLUME_INVALID_METADATA";
+inline constexpr std::string_view kErrorVolumeTransformNotInvertible = "VOLUME_TRANSFORM_NOT_INVERTIBLE";
+inline constexpr std::string_view kErrorVolumeImageSizeMismatch = "VOLUME_IMAGE_SIZE_MISMATCH";
+
 struct ErrorInfo {
     std::string code;
     std::string message;
     std::string detail;
     bool recoverable = true;
 };
+
+[[nodiscard]] ErrorInfo makeErrorInfo(
+    std::string code,
+    std::string message,
+    std::string detail = {},
+    bool recoverable = true);
 
 template <typename T>
 class Result {
@@ -98,8 +117,9 @@ public:
 错误约定：
 
 - 跨模块业务错误使用 `Result<T>` 或 `Result<void>` 返回。
-- `ErrorInfo::code` 使用稳定机器可读字符串，例如 `DICOM_LOADER_NOT_IMPLEMENTED`。
+- `ErrorInfo::code` 使用稳定机器可读字符串；新增跨模块错误码应优先在 core 中固化为 `kError*` 常量。
 - `message` 面向开发和日志，`detail` 保存可选上下文，`recoverable` 标识调用方是否可继续流程。
+- DICOM CT 导入当前稳定错误码为 `DICOM_FOLDER_NOT_FOUND`、`DICOM_DEPENDENCY_MISSING`、`DICOM_EMPTY_FOLDER`、`DICOM_NO_CT_SERIES`、`DICOM_MULTI_SERIES_UNSUPPORTED`、`DICOM_MISSING_TAG`、`DICOM_INCONSISTENT_GEOMETRY`、`DICOM_IMAGE_BUILD_FAILED`。
 
 ## 4. Volume 与坐标接口
 
@@ -133,6 +153,15 @@ public:
     [[nodiscard]] virtual int16_t voxelHu(int i, int j, int k) const = 0;
 };
 
+class DenseHuVolume final : public IImageVolume {
+public:
+    DenseHuVolume(Size3i dimensions, std::vector<int16_t> voxels);
+
+    [[nodiscard]] Size3i dimensions() const override;
+    [[nodiscard]] int16_t voxelHu(int i, int j, int k) const override;
+    [[nodiscard]] const std::vector<int16_t>& voxels() const;
+};
+
 struct VolumeData {
     VolumeMetadata metadata;
     VolumeTransform transform;
@@ -143,6 +172,8 @@ struct VolumeData {
     std::string dataHash;
 };
 
+[[nodiscard]] Result<void> validateVolumeMetadata(const VolumeMetadata& metadata);
+[[nodiscard]] Result<std::shared_ptr<DenseHuVolume>> makeDenseHuVolume(Size3i dimensions, std::vector<int16_t> voxels);
 [[nodiscard]] Result<VolumeTransform> makeVolumeTransform(const VolumeMetadata& metadata);
 [[nodiscard]] Vec3d voxelToPatient(const VolumeTransform& transform, Vec3d voxel);
 [[nodiscard]] Vec3d patientToVoxel(const VolumeTransform& transform, Vec3d patient);
@@ -154,6 +185,8 @@ struct VolumeData {
 
 - 业务坐标统一为 DICOM patient coordinate。
 - 长度单位统一为 mm。
+- `DenseHuVolume` 使用 slice-major 顺序存储 HU：`k * dimensions.x * dimensions.y + j * dimensions.x + i`。
+- `validateVolumeMetadata` 至少校验 dimensions、spacing、origin、方向向量、rescale 参数和 HU 范围。
 - `VolumeTransform::voxelToPatient` 和 `VolumeTransform::patientToVoxel` 是 voxel/patient 转换唯一入口。
 
 ## 5. 器械规划接口

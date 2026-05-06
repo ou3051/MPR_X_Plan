@@ -24,10 +24,21 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 if(MSVC)
-    add_compile_options(/utf-8 /permissive- /Zc:__cplusplus)
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CXX>:/permissive->
+        $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>
+    )
 endif()
 
 measurement_find_dependencies()
+
+if(MEASUREMENT_HAVE_CUDA)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_CUDA_EXTENSIONS OFF)
+endif()
 
 add_subdirectory(src/measurement/core)
 add_subdirectory(src/measurement/dicom)

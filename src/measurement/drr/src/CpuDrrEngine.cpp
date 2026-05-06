@@ -9,9 +9,108 @@ namespace measurement {
 
 namespace {
 
-[[nodiscard]] float huToMu(int16_t hu)
+constexpr double kProjectionTolerance = 1.0e-6;
+
+[[nodiscard]] bool isFinite(double value)
 {
-    return static_cast<float>(std::max(static_cast<int>(hu) + 1000, 0)) / 1000.0F;
+    return std::isfinite(value);
+}
+
+[[nodiscard]] bool isFinite(Vec3d value)
+{
+    return isFinite(value.x) && isFinite(value.y) && isFinite(value.z);
+}
+
+[[nodiscard]] bool dimensionsArePositive(Size3i dimensions)
+{
+    return dimensions.x > 0 && dimensions.y > 0 && dimensions.z > 0;
+}
+
+[[nodiscard]] bool volumeBoundsAreValid(const VolumeTransform& transform)
+{
+    return isFinite(transform.boundsMinPatientMm)
+        && isFinite(transform.boundsMaxPatientMm)
+        && transform.boundsMinPatientMm.x <= transform.boundsMaxPatientMm.x
+        && transform.boundsMinPatientMm.y <= transform.boundsMaxPatientMm.y
+        && transform.boundsMinPatientMm.z <= transform.boundsMaxPatientMm.z;
+}
+
+[[nodiscard]] Result<void> validateVolumeForDrr(const VolumeData& volume)
+{
+    if (!volume.image) {
+        return Result<void>::failure({"DRR_VOLUME_EMPTY", "DRR render requires a volume image.", "", true});
+    }
+
+    if (!dimensionsArePositive(volume.image->dimensions()) || !volumeBoundsAreValid(volume.transform)) {
+        return Result<void>::failure({"DRR_VOLUME_EMPTY", "DRR render requires a non-empty volume with valid patient bounds.", "", true});
+    }
+
+    return Result<void>::success();
+}
+
+[[nodiscard]] Result<void> validateSettings(const ProjectionParams& params, const DrrRenderSettings& settings)
+{
+    if (settings.width <= 0
+        || settings.height <= 0
+        || !isFinite(settings.stepMm)
+        || settings.stepMm <= 0.0
+        || !isFinite(params.pixelSpacingMm)
+        || params.pixelSpacingMm <= 0.0
+        || !isFinite(settings.windowCenter)
+        || !isFinite(settings.windowWidth)
+        || settings.windowWidth <= 0.0
+        || !isFinite(settings.gamma)
+        || settings.gamma <= 0.0
+        || !isFinite(settings.huOffset)
+        || !isFinite(settings.huScale)
+        || settings.huScale <= 0.0) {
+        return Result<void>::failure({"DRR_INVALID_SETTINGS", "DRR settings are invalid.", "", true});
+    }
+
+    return Result<void>::success();
+}
+
+[[nodiscard]] Result<void> validateProjection(const ProjectionParams& params)
+{
+    if (!isFinite(params.sourcePosPatientMm)
+        || !isFinite(params.detectorCenterPatientMm)
+        || !isFinite(params.detectorUPatientUnit)
+        || !isFinite(params.detectorVPatientUnit)) {
+        return Result<void>::failure({"DRR_INVALID_PROJECTION", "DRR projection contains non-finite geometry.", "", true});
+    }
+
+    const Vec3d sourceToDetector = params.detectorCenterPatientMm - params.sourcePosPatientMm;
+    if (length(sourceToDetector) <= kProjectionTolerance) {
+        return Result<void>::failure({"DRR_INVALID_PROJECTION", "DRR source and detector center must be separated.", "", true});
+    }
+
+    const double detectorULength = length(params.detectorUPatientUnit);
+    const double detectorVLength = length(params.detectorVPatientUnit);
+    if (detectorULength <= kProjectionTolerance || detectorVLength <= kProjectionTolerance) {
+        return Result<void>::failure({"DRR_INVALID_PROJECTION", "DRR detector axes must be non-zero.", "", true});
+    }
+
+    const Vec3d detectorU = params.detectorUPatientUnit / detectorULength;
+    const Vec3d detectorV = params.detectorVPatientUnit / detectorVLength;
+    if (std::abs(dot(detectorU, detectorV)) > kProjectionTolerance) {
+        return Result<void>::failure({"DRR_INVALID_PROJECTION", "DRR detector axes must be orthogonal.", "", true});
+    }
+
+    return Result<void>::success();
+}
+
+[[nodiscard]] float huToMu(int16_t hu, const DrrRenderSettings& settings)
+{
+    const double calibratedHu = static_cast<double>(hu) * settings.huScale + settings.huOffset;
+    return static_cast<float>(std::max(calibratedHu + 1000.0, 0.0) / 1000.0);
+}
+
+[[nodiscard]] uint16_t mapIntegralToDisplay(float integral, const DrrRenderSettings& settings)
+{
+    const double lower = settings.windowCenter - settings.windowWidth * 0.5;
+    const double normalized = std::clamp((static_cast<double>(integral) - lower) / settings.windowWidth, 0.0, 1.0);
+    const double gammaCorrected = std::pow(normalized, 1.0 / settings.gamma);
+    return static_cast<uint16_t>(std::clamp(gammaCorrected, 0.0, 1.0) * 65535.0);
 }
 
 [[nodiscard]] bool intersectAabb(Vec3d source, Vec3d direction, Vec3d boundsMin, Vec3d boundsMax, double& tEnter, double& tExit)
@@ -65,8 +164,9 @@ namespace {
 
 Result<void> CpuDrrEngine::setVolume(const VolumeData& volume)
 {
-    if (!volume.image) {
-        return Result<void>::failure({"DRR_VOLUME_EMPTY", "DRR render requires a volume image.", "", true});
+    const auto validation = validateVolumeForDrr(volume);
+    if (!validation.ok()) {
+        return validation;
     }
     m_volume = volume;
     return Result<void>::success();
@@ -77,15 +177,29 @@ Result<DrrImage> CpuDrrEngine::render(const ProjectionParams& params, const DrrR
     if (!m_volume.image) {
         return Result<DrrImage>::failure({"DRR_VOLUME_EMPTY", "DRR render requires a volume image.", "", true});
     }
-    if (settings.width <= 0 || settings.height <= 0 || settings.stepMm <= 0.0 || params.pixelSpacingMm <= 0.0) {
-        return Result<DrrImage>::failure({"DRR_INVALID_SETTINGS", "DRR settings are invalid.", "", true});
+
+    const auto volumeValidation = validateVolumeForDrr(m_volume);
+    if (!volumeValidation.ok()) {
+        return Result<DrrImage>::failure(volumeValidation.error());
+    }
+
+    const auto settingsValidation = validateSettings(params, settings);
+    if (!settingsValidation.ok()) {
+        return Result<DrrImage>::failure(settingsValidation.error());
+    }
+
+    const auto projectionValidation = validateProjection(params);
+    if (!projectionValidation.ok()) {
+        return Result<DrrImage>::failure(projectionValidation.error());
     }
 
     DrrImage image;
     image.width = settings.width;
     image.height = settings.height;
     image.projection = params;
-    image.lineIntegral.resize(static_cast<size_t>(settings.width * settings.height), 0.0F);
+    if (settings.outputLineIntegral) {
+        image.lineIntegral.resize(static_cast<size_t>(settings.width * settings.height), 0.0F);
+    }
     image.displayImage.resize(static_cast<size_t>(settings.width * settings.height), 0U);
 
     const Vec3d detectorU = normalize(params.detectorUPatientUnit);
@@ -104,15 +218,15 @@ Result<DrrImage> CpuDrrEngine::render(const ProjectionParams& params, const DrrR
             if (intersectAabb(params.sourcePosPatientMm, rayDir, m_volume.transform.boundsMinPatientMm, m_volume.transform.boundsMaxPatientMm, tEnter, tExit)) {
                 for (double t = tEnter; t <= tExit; t += settings.stepMm) {
                     const Vec3d sample = params.sourcePosPatientMm + rayDir * t;
-                    integral += huToMu(nearestHu(m_volume, sample)) * static_cast<float>(settings.stepMm);
+                    integral += huToMu(nearestHu(m_volume, sample), settings) * static_cast<float>(settings.stepMm);
                 }
             }
 
             const size_t index = static_cast<size_t>(y * settings.width + x);
-            image.lineIntegral[index] = integral;
-            const double lower = settings.windowCenter - settings.windowWidth * 0.5;
-            const double normalized = settings.windowWidth > 0.0 ? std::clamp((static_cast<double>(integral) - lower) / settings.windowWidth, 0.0, 1.0) : 0.0;
-            image.displayImage[index] = static_cast<uint16_t>(normalized * 65535.0);
+            if (settings.outputLineIntegral) {
+                image.lineIntegral[index] = integral;
+            }
+            image.displayImage[index] = mapIntegralToDisplay(integral, settings);
         }
     }
 

@@ -6,7 +6,7 @@ function(measurement_find_dependencies)
     set(MEASUREMENT_HAVE_CUDA OFF CACHE BOOL "CUDA toolkit was found" FORCE)
     set(MPR_DCMTK_ROOT "" CACHE PATH "Optional root path for a local DCMTK installation")
 
-    find_package(Qt6 QUIET COMPONENTS Widgets)
+    find_package(Qt6 QUIET COMPONENTS Widgets OpenGL OpenGLWidgets)
     if(Qt6_FOUND)
         set(MEASUREMENT_HAVE_QT ON CACHE BOOL "Qt6 was found" FORCE)
     endif()
@@ -17,8 +17,13 @@ function(measurement_find_dependencies)
             CommonDataModel
             ImagingCore
             ImagingGeneral
+            FiltersSources
+            InteractionStyle
             RenderingCore
             RenderingOpenGL2
+            RenderingVolume
+            RenderingVolumeOpenGL2
+            GUISupportQt
         )
         if(VTK_FOUND)
             set(MEASUREMENT_HAVE_VTK ON CACHE BOOL "VTK was found" FORCE)

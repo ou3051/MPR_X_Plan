@@ -3,17 +3,17 @@ function(measurement_apply_common_options target_name)
 
     if(MSVC)
         target_compile_options(${target_name} PRIVATE
-            /W4
-            /WX
-            /permissive-
-            /Zc:preprocessor
+            $<$<COMPILE_LANGUAGE:CXX>:/W4>
+            $<$<COMPILE_LANGUAGE:CXX>:/WX>
+            $<$<COMPILE_LANGUAGE:CXX>:/permissive->
+            $<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>
         )
     else()
         target_compile_options(${target_name} PRIVATE
-            -Wall
-            -Wextra
-            -Wpedantic
-            -Werror
+            $<$<COMPILE_LANGUAGE:CXX>:-Wall>
+            $<$<COMPILE_LANGUAGE:CXX>:-Wextra>
+            $<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>
+            $<$<COMPILE_LANGUAGE:CXX>:-Werror>
         )
     endif()
 endfunction()

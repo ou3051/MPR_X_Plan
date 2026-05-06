@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace measurement {
 
@@ -36,16 +37,32 @@ public:
     [[nodiscard]] virtual int16_t voxelHu(int i, int j, int k) const = 0;
 };
 
+class DenseHuVolume final : public IImageVolume {
+public:
+    DenseHuVolume(Size3i dimensions, std::vector<int16_t> voxels);
+
+    [[nodiscard]] Size3i dimensions() const override;
+    [[nodiscard]] int16_t voxelHu(int i, int j, int k) const override;
+    [[nodiscard]] const std::vector<int16_t>& voxels() const;
+
+private:
+    Size3i m_dimensions{};
+    std::vector<int16_t> m_voxels;
+};
+
 struct VolumeData {
     VolumeMetadata metadata;
     VolumeTransform transform;
     std::shared_ptr<IImageVolume> image;
+    std::string patientPositionCode = "HFS";
     std::string sourceFolder;
     std::string seriesUid;
     std::string studyUid;
     std::string dataHash;
 };
 
+[[nodiscard]] Result<void> validateVolumeMetadata(const VolumeMetadata& metadata);
+[[nodiscard]] Result<std::shared_ptr<DenseHuVolume>> makeDenseHuVolume(Size3i dimensions, std::vector<int16_t> voxels);
 [[nodiscard]] Result<VolumeTransform> makeVolumeTransform(const VolumeMetadata& metadata);
 [[nodiscard]] Vec3d voxelToPatient(const VolumeTransform& transform, Vec3d voxel);
 [[nodiscard]] Vec3d patientToVoxel(const VolumeTransform& transform, Vec3d patient);

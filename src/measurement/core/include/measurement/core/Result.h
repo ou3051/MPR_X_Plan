@@ -2,9 +2,23 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace measurement {
+
+inline constexpr std::string_view kErrorDicomFolderNotFound = "DICOM_FOLDER_NOT_FOUND";
+inline constexpr std::string_view kErrorDicomDependencyMissing = "DICOM_DEPENDENCY_MISSING";
+inline constexpr std::string_view kErrorDicomEmptyFolder = "DICOM_EMPTY_FOLDER";
+inline constexpr std::string_view kErrorDicomNoCtSeries = "DICOM_NO_CT_SERIES";
+inline constexpr std::string_view kErrorDicomMultiSeriesUnsupported = "DICOM_MULTI_SERIES_UNSUPPORTED";
+inline constexpr std::string_view kErrorDicomMissingTag = "DICOM_MISSING_TAG";
+inline constexpr std::string_view kErrorDicomInconsistentGeometry = "DICOM_INCONSISTENT_GEOMETRY";
+inline constexpr std::string_view kErrorDicomImageBuildFailed = "DICOM_IMAGE_BUILD_FAILED";
+
+inline constexpr std::string_view kErrorVolumeInvalidMetadata = "VOLUME_INVALID_METADATA";
+inline constexpr std::string_view kErrorVolumeTransformNotInvertible = "VOLUME_TRANSFORM_NOT_INVERTIBLE";
+inline constexpr std::string_view kErrorVolumeImageSizeMismatch = "VOLUME_IMAGE_SIZE_MISMATCH";
 
 struct ErrorInfo {
     std::string code;
@@ -12,6 +26,15 @@ struct ErrorInfo {
     std::string detail;
     bool recoverable = true;
 };
+
+[[nodiscard]] inline ErrorInfo makeErrorInfo(
+    std::string code,
+    std::string message,
+    std::string detail = {},
+    bool recoverable = true)
+{
+    return {std::move(code), std::move(message), std::move(detail), recoverable};
+}
 
 template <typename T>
 class Result {
