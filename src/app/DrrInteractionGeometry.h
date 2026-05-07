@@ -22,6 +22,13 @@ struct DrrInteractionRay {
     measurement::Vec3d directionPatientUnit;
 };
 
+enum class DrrInteractionTarget {
+    None,
+    Head,
+    Tail,
+    Body
+};
+
 struct DrrRayClosestPoint {
     measurement::Vec3d pointPatientMm;
     double distanceMm = 0.0;

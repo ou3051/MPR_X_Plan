@@ -235,13 +235,6 @@ private:
     std::array<QImage, 2> m_drrImages{};
 };
 
-enum class DrrInteractionTarget {
-    None,
-    Head,
-    Tail,
-    Body
-};
-
 class XrayDisplayWidget;
 
 class MprPlanVerificationWindow final : public QMainWindow {
