@@ -51,7 +51,7 @@ namespace {
 
 [[nodiscard]] const char* measurementTypeName(measurement::MeasurementType type)
 {
-    return type == measurement::MeasurementType::Angle ? "Angle" : "Distance";
+    return type == measurement::MeasurementType::Angle ? "角度" : "距离";
 }
 
 }  // namespace
@@ -169,12 +169,12 @@ void MprPlanVerificationWindow::handleMeasurementPointAdded(
         m_pendingMeasurementPlane.reset();
         m_measurementHoverPatientMm.reset();
         selectMeasurementById(id);
-        statusBar()->showMessage("Measurement added.", 3000);
+        statusBar()->showMessage("已添加测量。", 3000);
     } else {
         m_measurementHoverPatientMm = patientPoint;
         const size_t requiredPointCount = m_measurementMode == measurement::MeasurementMode::Angle ? 4U : 2U;
         if (previousPointCount + 1U >= requiredPointCount && m_measurementStateMachine.pendingPoints().empty()) {
-            statusBar()->showMessage("Measurement was rejected because the picked points are degenerate.", 5000);
+            statusBar()->showMessage("选取点退化，测量已被拒绝。", 5000);
         }
     }
 
@@ -232,7 +232,7 @@ void MprPlanVerificationWindow::jumpToMeasurement(measurement::MeasurementId id)
     const auto annotation = m_measurementStore.find(id);
     const auto anchor = m_measurementStore.anchorWorldPoint(id);
     if (!annotation.has_value() || !anchor.has_value() || !isFiniteVec(*anchor)) {
-        statusBar()->showMessage("Selected measurement cannot be located.", 4000);
+        statusBar()->showMessage("无法定位选中的测量。", 4000);
         return;
     }
 
@@ -240,7 +240,7 @@ void MprPlanVerificationWindow::jumpToMeasurement(measurement::MeasurementId id)
         activateMprPlane(*plane);
     }
     setCrosshairPatient(*anchor);
-    statusBar()->showMessage(QString("Measurement #%1 located.").arg(id.value()), 3000);
+    statusBar()->showMessage(QString("已定位测量 #%1。").arg(id.value()), 3000);
 }
 
 void MprPlanVerificationWindow::deleteSelectedMeasurement()

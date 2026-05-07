@@ -182,7 +182,7 @@ private:
     double m_displayWindowCenter = 0.0;
     double m_displayWindowWidth = 1.0;
     double m_displayGamma = 1.0;
-    QString m_status = "No volume";
+    QString m_status = "无体数据";
     bool m_placementActive = false;
     std::optional<DrrDetectorLine> m_pendingLine;
     std::array<std::optional<DrrDetectorLine>, 2> m_placementConstraints{};

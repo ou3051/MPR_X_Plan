@@ -264,7 +264,7 @@ void XrayDisplayWidget::refreshImage()
     m_lineIntegralWidth = 0;
     m_lineIntegralHeight = 0;
     m_scalarImage = nullptr;
-    m_status = "No volume";
+    m_status = "无体数据";
     if (m_volume == nullptr || !m_volume->image) {
         m_cachedVolumeSignature.clear();
         m_cudaVolumeReady = false;
@@ -276,7 +276,7 @@ void XrayDisplayWidget::refreshImage()
     measurement::ProjectionParams projection;
     measurement::DrrRenderSettings settings;
     if (!buildRenderRequest(projection, settings)) {
-        m_status = "Invalid X-ray geometry";
+        m_status = "X 光几何无效";
         rebuildVtkScene();
         return;
     }
@@ -298,7 +298,7 @@ void XrayDisplayWidget::refreshImage()
         if (cudaVolume.ok()) {
             m_cudaVolumeReady = true;
         } else {
-            m_status = QString("CPU fallback (%1)").arg(QString::fromStdString(cudaVolume.error().code));
+            m_status = QString("CPU 回退（%1）").arg(QString::fromStdString(cudaVolume.error().code));
         }
 
         const auto cpuVolume = m_cpuEngine.setVolume(*m_volume);
@@ -318,16 +318,16 @@ void XrayDisplayWidget::refreshImage()
         if (cudaRendered.ok()) {
             cacheRenderedDrr(cudaRendered.value());
             m_status = QString("%1 | %2 ms")
-                           .arg(m_image.isNull() ? "Empty X-ray" : "CUDA DRR")
+                            .arg(m_image.isNull() ? "空 X 光" : "CUDA DRR")
                            .arg(timer.elapsed());
             rebuildVtkScene();
             return;
         }
-        m_status = QString("CPU fallback (%1)").arg(QString::fromStdString(cudaRendered.error().code));
+        m_status = QString("CPU 回退（%1）").arg(QString::fromStdString(cudaRendered.error().code));
     }
 
     if (!m_cpuVolumeReady) {
-        m_status = QString("CPU DRR volume is not ready | %1 ms").arg(timer.elapsed());
+        m_status = QString("CPU DRR 体数据尚未就绪 | %1 ms").arg(timer.elapsed());
         rebuildVtkScene();
         return;
     }
@@ -342,8 +342,8 @@ void XrayDisplayWidget::refreshImage()
     }
 
     cacheRenderedDrr(cpuRendered.value());
-    if (m_status.isEmpty() || !m_status.startsWith("CPU fallback")) {
-        m_status = m_image.isNull() ? "Empty X-ray" : "CPU DRR";
+    if (m_status.isEmpty() || !m_status.startsWith("CPU 回退")) {
+        m_status = m_image.isNull() ? "空 X 光" : "CPU DRR";
     }
     m_status = QString("%1 | %2 ms").arg(m_status).arg(timer.elapsed());
     rebuildVtkScene();

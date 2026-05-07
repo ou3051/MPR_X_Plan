@@ -48,7 +48,7 @@ namespace {
 
 void MprPlanVerificationWindow::buildUi()
 {
-    setWindowTitle("MPR Plan Verification");
+    setWindowTitle("MPR 计划验证");
 
     auto* central = new QWidget(this);
     central->setObjectName("AppRoot");
@@ -78,8 +78,8 @@ void MprPlanVerificationWindow::buildUi()
     auto* xrayLayout = new QVBoxLayout(xrayPanel);
     xrayLayout->setContentsMargins(8, 8, 8, 8);
     xrayLayout->setSpacing(8);
-    m_apXrayView = new XrayDisplayWidget("AP X-ray", measurement::XrayPreset::AP, xrayPanel);
-    m_latXrayView = new XrayDisplayWidget("LAT X-ray", measurement::XrayPreset::LAT, xrayPanel);
+    m_apXrayView = new XrayDisplayWidget("AP X 光", measurement::XrayPreset::AP, xrayPanel);
+    m_latXrayView = new XrayDisplayWidget("LAT X 光", measurement::XrayPreset::LAT, xrayPanel);
     xrayLayout->addWidget(m_apXrayView, 1);
     xrayLayout->addWidget(m_latXrayView, 1);
 
@@ -106,14 +106,14 @@ void MprPlanVerificationWindow::buildUi()
     drrScrollArea->setWidget(drrContent);
     drrOuterLayout->addWidget(drrScrollArea);
 
-    auto* workflowGroup = new QGroupBox("Workflow", drrContent);
+    auto* workflowGroup = new QGroupBox("流程", drrContent);
     auto* loadGrid = new QGridLayout(workflowGroup);
     loadGrid->setHorizontalSpacing(8);
     loadGrid->setVerticalSpacing(8);
-    m_loadDicomButton = new QPushButton("Load DICOM", workflowGroup);
-    auto* resetViewsButton = new QPushButton("Reset Views", workflowGroup);
-    auto* saveButton = new QPushButton("Save .mprproj", workflowGroup);
-    m_freeObliqueButton = new QPushButton(m_freeObliqueMode ? "Free oblique: On" : "Free oblique: Off", workflowGroup);
+    m_loadDicomButton = new QPushButton("加载 DICOM", workflowGroup);
+    auto* resetViewsButton = new QPushButton("重置视图", workflowGroup);
+    auto* saveButton = new QPushButton("保存 .mprproj", workflowGroup);
+    m_freeObliqueButton = new QPushButton(m_freeObliqueMode ? "自由斜切：开" : "自由斜切：关", workflowGroup);
     m_freeObliqueButton->setCheckable(true);
     m_freeObliqueButton->setChecked(m_freeObliqueMode);
     loadGrid->addWidget(m_loadDicomButton, 0, 0, 1, 2);
@@ -122,7 +122,7 @@ void MprPlanVerificationWindow::buildUi()
     loadGrid->addWidget(m_freeObliqueButton, 2, 0, 1, 2);
     drrPanelLayout->addWidget(workflowGroup);
 
-    auto* volumeGroup = new QGroupBox("Volume", drrContent);
+    auto* volumeGroup = new QGroupBox("体数据", drrContent);
     auto* volumeLayout = new QVBoxLayout(volumeGroup);
     m_volumeLabel = new QLabel(volumeGroup);
     m_volumeLabel->setObjectName("VolumeInfoLabel");
@@ -130,19 +130,19 @@ void MprPlanVerificationWindow::buildUi()
     volumeLayout->addWidget(m_volumeLabel);
     drrPanelLayout->addWidget(volumeGroup);
 
-    auto* postureGroup = new QGroupBox("Patient position", drrContent);
+    auto* postureGroup = new QGroupBox("患者体位", drrContent);
     auto* postureLayout = new QFormLayout(postureGroup);
     m_patientPostureCombo = new QComboBox(postureGroup);
-    m_patientPostureCombo->addItem("Supine", false);
-    m_patientPostureCombo->addItem("Prone", true);
+    m_patientPostureCombo->addItem("仰卧", false);
+    m_patientPostureCombo->addItem("俯卧", true);
     m_headFeetDirectionCombo = new QComboBox(postureGroup);
-    m_headFeetDirectionCombo->addItem("Head first", false);
-    m_headFeetDirectionCombo->addItem("Feet first", true);
-    postureLayout->addRow("Body posture", m_patientPostureCombo);
-    postureLayout->addRow("Entry direction", m_headFeetDirectionCombo);
+    m_headFeetDirectionCombo->addItem("头先进", false);
+    m_headFeetDirectionCombo->addItem("脚先进", true);
+    postureLayout->addRow("身体姿态", m_patientPostureCombo);
+    postureLayout->addRow("进床方向", m_headFeetDirectionCombo);
     drrPanelLayout->addWidget(postureGroup);
 
-    auto* crosshairGroup = new QGroupBox("Crosshair voxel", drrContent);
+    auto* crosshairGroup = new QGroupBox("十字线体素", drrContent);
     auto* crosshairLayout = new QGridLayout(crosshairGroup);
     m_xSlider = new QSlider(Qt::Horizontal, crosshairGroup);
     m_ySlider = new QSlider(Qt::Horizontal, crosshairGroup);
@@ -168,14 +168,14 @@ void MprPlanVerificationWindow::buildUi()
     planningSplitter->setChildrenCollapsible(false);
     controls->addWidget(planningSplitter, 1);
 
-    auto* measurementGroup = new QGroupBox("Measurements", controlPanel);
+    auto* measurementGroup = new QGroupBox("测量", controlPanel);
     auto* measurementLayout = new QVBoxLayout(measurementGroup);
     auto* measurementButtons = new QGridLayout();
     measurementButtons->setHorizontalSpacing(8);
     measurementButtons->setVerticalSpacing(8);
-    m_measureNavigateButton = new QPushButton("Navigate", measurementGroup);
-    m_measureDistanceButton = new QPushButton("Distance", measurementGroup);
-    m_measureAngleButton = new QPushButton("Angle", measurementGroup);
+    m_measureNavigateButton = new QPushButton("浏览", measurementGroup);
+    m_measureDistanceButton = new QPushButton("距离", measurementGroup);
+    m_measureAngleButton = new QPushButton("角度", measurementGroup);
     for (QPushButton* button : {m_measureNavigateButton, m_measureDistanceButton, m_measureAngleButton}) {
         button->setCheckable(true);
     }
@@ -188,17 +188,17 @@ void MprPlanVerificationWindow::buildUi()
     measurementLayout->addWidget(m_measurementList, 1);
     auto* measurementForm = new QFormLayout();
     m_measurementLabel = new QLineEdit(measurementGroup);
-    measurementForm->addRow("Label", m_measurementLabel);
+    measurementForm->addRow("标签", m_measurementLabel);
     measurementLayout->addLayout(measurementForm);
     auto* measurementEditButtons = new QGridLayout();
-    auto* deleteMeasurement = new QPushButton("Delete", measurementGroup);
-    auto* clearMeasurementsButton = new QPushButton("Clear", measurementGroup);
+    auto* deleteMeasurement = new QPushButton("删除", measurementGroup);
+    auto* clearMeasurementsButton = new QPushButton("清空", measurementGroup);
     measurementEditButtons->addWidget(deleteMeasurement, 0, 0);
     measurementEditButtons->addWidget(clearMeasurementsButton, 0, 1);
     measurementLayout->addLayout(measurementEditButtons);
     planningSplitter->addWidget(measurementGroup);
 
-    auto* instrumentGroup = new QGroupBox("Plan instruments", controlPanel);
+    auto* instrumentGroup = new QGroupBox("规划器械", controlPanel);
     auto* instrumentLayout = new QVBoxLayout(instrumentGroup);
     m_instrumentList = new QListWidget(instrumentGroup);
     m_instrumentList->setMinimumHeight(160);
@@ -208,18 +208,18 @@ void MprPlanVerificationWindow::buildUi()
     m_label = new QLineEdit(instrumentGroup);
     m_length = makeSpin(1.0, 300.0, 55.0, 1.0);
     m_diameter = makeSpin(0.5, 20.0, 2.0, 0.5);
-    form->addRow("Name", m_label);
-    form->addRow("Length mm", m_length);
-    form->addRow("Diameter mm", m_diameter);
+    form->addRow("名称", m_label);
+    form->addRow("长度 mm", m_length);
+    form->addRow("直径 mm", m_diameter);
     instrumentLayout->addLayout(form);
 
     auto* instrumentButtons = new QGridLayout();
     instrumentButtons->setHorizontalSpacing(8);
     instrumentButtons->setVerticalSpacing(8);
-    auto* addPin = new QPushButton("Add pin at crosshair", instrumentGroup);
-    auto* addScrew = new QPushButton("Add screw at crosshair", instrumentGroup);
-    m_editInstrumentButton = new QPushButton("Edit selected", instrumentGroup);
-    auto* remove = new QPushButton("Delete", instrumentGroup);
+    auto* addPin = new QPushButton("在十字线处添加导针", instrumentGroup);
+    auto* addScrew = new QPushButton("在十字线处添加螺钉", instrumentGroup);
+    m_editInstrumentButton = new QPushButton("编辑选中项", instrumentGroup);
+    auto* remove = new QPushButton("删除", instrumentGroup);
     instrumentButtons->addWidget(addPin, 0, 0);
     instrumentButtons->addWidget(addScrew, 0, 1);
     instrumentButtons->addWidget(m_editInstrumentButton, 1, 0);
@@ -229,9 +229,9 @@ void MprPlanVerificationWindow::buildUi()
     auto* drrPlacementButtons = new QGridLayout();
     drrPlacementButtons->setHorizontalSpacing(8);
     drrPlacementButtons->setVerticalSpacing(8);
-    m_drrPinButton = new QPushButton("DRR Pin", instrumentGroup);
-    m_drrScrewButton = new QPushButton("DRR Screw", instrumentGroup);
-    m_drrCancelButton = new QPushButton("Cancel DRR placement", instrumentGroup);
+    m_drrPinButton = new QPushButton("DRR 导针", instrumentGroup);
+    m_drrScrewButton = new QPushButton("DRR 螺钉", instrumentGroup);
+    m_drrCancelButton = new QPushButton("取消 DRR 放置", instrumentGroup);
     m_drrPinButton->setCheckable(true);
     m_drrScrewButton->setCheckable(true);
     drrPlacementButtons->addWidget(m_drrPinButton, 0, 0);
@@ -242,16 +242,16 @@ void MprPlanVerificationWindow::buildUi()
     planningSplitter->setSizes({260, 460});
     controlPanel->setMinimumWidth(330);
 
-    auto* statusGroup = new QGroupBox("Status", drrContent);
+    auto* statusGroup = new QGroupBox("状态", drrContent);
     auto* statusLayout = new QVBoxLayout(statusGroup);
     m_statusLabel = new QLabel(statusGroup);
     m_statusLabel->setObjectName("StatusInfoLabel");
     m_statusLabel->setWordWrap(true);
     statusLayout->addWidget(m_statusLabel);
     drrPanelLayout->addWidget(statusGroup);
-    auto* drrGroup = new QGroupBox("DRR Parameters", drrPanel);
+    auto* drrGroup = new QGroupBox("DRR 参数", drrPanel);
     auto* drrGroupLayout = new QVBoxLayout(drrGroup);
-    drrGroup->setTitle("DRR Parameters");
+    drrGroup->setTitle("DRR 参数");
     drrGroupLayout->setContentsMargins(9, 9, 9, 9);
     drrGroupLayout->setSpacing(8);
     auto* drrTabs = new QTabWidget(drrGroup);
@@ -276,34 +276,34 @@ void MprPlanVerificationWindow::buildUi()
         m_drrPixelSpacing[index] = makeSpin(0.0, 1000.0, 0.0, 0.05);
         m_drrPixelSpacing[index]->setDecimals(3);
         m_drrPixelSpacing[index]->setSuffix(" mm");
-        m_drrPixelSpacing[index]->setSpecialValueText("Auto");
+        m_drrPixelSpacing[index]->setSpecialValueText("自动");
         m_drrRayStep[index] = makeSpin(0.001, 1000.0, 1.0, 0.1);
         m_drrRayStep[index]->setDecimals(3);
         m_drrRayStep[index]->setSuffix(" mm");
         m_drrWindowCenter[index] = makeSpin(0.0, 1.0e6, 0.0, 10.0);
         m_drrWindowCenter[index]->setDecimals(2);
-        m_drrWindowCenter[index]->setSpecialValueText("Auto");
+        m_drrWindowCenter[index]->setSpecialValueText("自动");
         m_drrWindowWidth[index] = makeSpin(0.0, 1.0e6, 0.0, 10.0);
         m_drrWindowWidth[index]->setDecimals(2);
-        m_drrWindowWidth[index]->setSpecialValueText("Auto");
+        m_drrWindowWidth[index]->setSpecialValueText("自动");
         m_drrGamma[index] = makeSpin(0.1, 10.0, 1.0, 0.1);
         m_drrGamma[index]->setDecimals(2);
-        m_drrHuOffset[index] = makeSpin(-10000.0, 10000.0, 0.0, 10.0);
+        m_drrHuOffset[index] = makeSpin(-10000.0, 10000.0, -150.0, 0.5);
         m_drrHuOffset[index]->setDecimals(1);
-        m_drrHuScale[index] = makeSpin(0.001, 100.0, 1.0, 0.05);
+        m_drrHuScale[index] = makeSpin(0.001, 100.0, 8.0, 0.5);
         m_drrHuScale[index]->setDecimals(4);
 
         drrForm->addRow("SID", m_drrSid[index]);
         drrForm->addRow("SOD", m_drrSod[index]);
-        drrForm->addRow("Detector width", m_drrDetectorWidth[index]);
-        drrForm->addRow("Detector height", m_drrDetectorHeight[index]);
-        drrForm->addRow("Pixel spacing", m_drrPixelSpacing[index]);
-        drrForm->addRow("Ray step", m_drrRayStep[index]);
-        drrForm->addRow("Window center", m_drrWindowCenter[index]);
-        drrForm->addRow("Window width", m_drrWindowWidth[index]);
-        drrForm->addRow("Gamma", m_drrGamma[index]);
-        drrForm->addRow("HU offset", m_drrHuOffset[index]);
-        drrForm->addRow("HU scale", m_drrHuScale[index]);
+        drrForm->addRow("探测器宽度", m_drrDetectorWidth[index]);
+        drrForm->addRow("探测器高度", m_drrDetectorHeight[index]);
+        drrForm->addRow("像素间距", m_drrPixelSpacing[index]);
+        drrForm->addRow("射线步长", m_drrRayStep[index]);
+        drrForm->addRow("窗位", m_drrWindowCenter[index]);
+        drrForm->addRow("窗宽", m_drrWindowWidth[index]);
+        drrForm->addRow("伽马", m_drrGamma[index]);
+        drrForm->addRow("HU 偏移", m_drrHuOffset[index]);
+        drrForm->addRow("HU 缩放", m_drrHuScale[index]);
         drrTabs->addTab(page, title);
     };
     makeDrrParameterPage(measurement::XrayPreset::AP, "AP");

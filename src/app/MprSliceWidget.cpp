@@ -46,11 +46,11 @@ constexpr double kPi = 3.14159265358979323846;
 {
     switch (plane) {
     case measurement::MprPlane::Axial:
-        return "Axial";
+        return "轴位";
     case measurement::MprPlane::Sagittal:
-        return "Sagittal";
+        return "矢状位";
     case measurement::MprPlane::Coronal:
-        return "Coronal";
+        return "冠状位";
     }
     return "MPR";
 }
@@ -296,7 +296,7 @@ measurement::Result<measurement::MprResliceParameters> MprSliceWidget::parameter
 {
     if (m_volume == nullptr || m_state == nullptr) {
         return measurement::Result<measurement::MprResliceParameters>::failure(
-            measurement::makeErrorInfo("MPR_VIEW_NOT_READY", "MPR view is not ready."));
+        measurement::makeErrorInfo("MPR_VIEW_NOT_READY", "MPR 视图尚未就绪。"));
     }
     return measurement::buildMprResliceParameters(*m_volume, stateForPlane(), m_request);
 }
@@ -349,7 +349,7 @@ void MprSliceWidget::refreshImage()
     if (!params.ok() || m_volume == nullptr) {
         m_instrumentSections.clear();
         m_image = QImage();
-        m_renderStatus = params.ok() ? "MPR volume is unavailable." : QString::fromStdString(params.error().code + ": " + params.error().detail);
+        m_renderStatus = params.ok() ? "MPR 体数据不可用。" : QString::fromStdString(params.error().code + ": " + params.error().detail);
         update();
         return;
     }
@@ -359,7 +359,7 @@ void MprSliceWidget::refreshImage()
         m_instrumentSections.clear();
         m_image = QImage();
         m_renderStatus = reslice.ok()
-            ? "MPR adapter returned no renderable image."
+            ? "MPR 适配器未返回可渲染图像。"
             : QString::fromStdString(reslice.error().code + ": " + reslice.error().detail);
         update();
         return;
@@ -367,7 +367,7 @@ void MprSliceWidget::refreshImage()
 
     m_image = imageFromVtkReslice(*reslice.value().image);
     if (m_image.isNull()) {
-        m_renderStatus = "MPR adapter returned an empty vtkImageData.";
+        m_renderStatus = "MPR 适配器返回了空 vtkImageData。";
     } else {
         m_renderStatus = "vtkImageReslice";
     }
@@ -875,7 +875,7 @@ void MprSliceWidget::paintEvent(QPaintEvent*)
 
     if (m_image.isNull()) {
         painter.setPen(QColor(170, 170, 170));
-        painter.drawText(rectForImage, Qt::AlignCenter, m_renderStatus.isEmpty() ? "No renderable volume" : m_renderStatus);
+    painter.drawText(rectForImage, Qt::AlignCenter, m_renderStatus.isEmpty() ? "没有可渲染的体数据" : m_renderStatus);
         return;
     }
 

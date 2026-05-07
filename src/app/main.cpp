@@ -15,7 +15,7 @@ namespace {
 void applySoftBlueTheme(QApplication& app)
 {
     QFont font = app.font();
-    font.setFamily("Segoe UI");
+    font.setFamily("Microsoft YaHei UI");
     font.setPointSize(10);
     app.setFont(font);
 
@@ -233,11 +233,11 @@ int main(int argc, char* argv[])
     QApplication::setStyle("Fusion");
     applySoftBlueTheme(app);
 
-    QCoreApplication::setApplicationName("measurement_mpr_interactive_test");
-    QCoreApplication::setApplicationVersion("0.1");
+    QCoreApplication::setApplicationName("MPR 计划验证");
+    QCoreApplication::setApplicationVersion("1.0");
 
     QCommandLineParser parser;
-    parser.setApplicationDescription("Interactive MPR test program");
+    parser.setApplicationDescription("交互式 MPR 计划验证程序");
     parser.addHelpOption();
     parser.addVersionOption();
 

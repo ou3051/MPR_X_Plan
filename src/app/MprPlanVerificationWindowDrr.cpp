@@ -155,8 +155,8 @@ void MprPlanVerificationWindow::setDrrPlacementMode(std::optional<measurement::I
     }
     statusBar()->showMessage(
         type.has_value()
-            ? "DRR placement: draw one head-to-tail line in AP first, then refine it in constrained LAT."
-            : "DRR placement cancelled.",
+            ? "DRR 放置：先在 AP 中绘制一条从头端到尾端的线，再在受限 LAT 中微调。"
+            : "已取消 DRR 放置。",
         5000);
     refreshXrayInteractionOverlays();
 }
@@ -201,21 +201,21 @@ void MprPlanVerificationWindow::handleDrrLineCompleted(measurement::XrayPreset p
         return;
     }
     if (preset == measurement::XrayPreset::LAT && !m_pendingDrrLines[0].has_value()) {
-        statusBar()->showMessage("DRR placement starts in AP. Draw AP first, then LAT will be constrained.", 5000);
+        statusBar()->showMessage("DRR 放置从 AP 开始。请先绘制 AP，随后 LAT 会受约束。", 5000);
         refreshXrayInteractionOverlays();
         return;
     }
     if (preset == measurement::XrayPreset::AP) {
         m_pendingDrrLines[0] = line;
         m_pendingDrrLines[1].reset();
-        statusBar()->showMessage("AP DRR line fixed. Draw the LAT line on the magenta constrained rails.", 6000);
+        statusBar()->showMessage("AP DRR 线已固定。请沿洋红色约束线绘制 LAT。", 6000);
         refreshXrayInteractionOverlays();
         return;
     }
 
     const auto constraints = drrPlacementConstraintsForView(measurement::XrayPreset::LAT);
     if (!constraints[0].has_value() || !constraints[1].has_value()) {
-        statusBar()->showMessage("LAT constraint is not available for this AP line. Cancel and redraw AP.", 7000);
+        statusBar()->showMessage("当前 AP 线无法生成 LAT 约束。请取消并重绘 AP。", 7000);
         refreshXrayInteractionOverlays();
         return;
     }
@@ -240,7 +240,7 @@ void MprPlanVerificationWindow::tryCreateInstrumentFromDrrLines()
     measurement::DrrRenderSettings renderSettings;
     if (!buildDrrRenderRequest(&m_volume, measurement::XrayPreset::AP, apSettings, apProjection, renderSettings)
         || !buildDrrRenderRequest(&m_volume, measurement::XrayPreset::LAT, latSettings, latProjection, renderSettings)) {
-        statusBar()->showMessage("DRR placement failed: projection geometry is not ready.", 6000);
+        statusBar()->showMessage("DRR 放置失败：投影几何尚未就绪。", 6000);
         return;
     }
 
@@ -249,7 +249,7 @@ void MprPlanVerificationWindow::tryCreateInstrumentFromDrrLines()
     const auto apTailRay = detectorPixelToPatientRay(apProjection, m_pendingDrrLines[0]->tail);
     const auto latTailRay = detectorPixelToPatientRay(latProjection, m_pendingDrrLines[1]->tail);
     if (!apHeadRay.has_value() || !latHeadRay.has_value() || !apTailRay.has_value() || !latTailRay.has_value()) {
-        statusBar()->showMessage("DRR placement failed: one of the drawn lines is outside the detector.", 6000);
+        statusBar()->showMessage("DRR 放置失败：绘制线超出探测器范围。", 6000);
         return;
     }
 
@@ -260,14 +260,14 @@ void MprPlanVerificationWindow::tryCreateInstrumentFromDrrLines()
         || head->distanceMm > kMaxRayPairDistanceMm
         || tail->distanceMm > kMaxRayPairDistanceMm) {
         m_pendingDrrLines[1].reset();
-        statusBar()->showMessage("DRR AP/LAT lines do not meet in 3D. Redraw the mismatched line.", 7000);
+        statusBar()->showMessage("DRR AP/LAT 线在三维空间中未相交。请重绘不匹配的线。", 7000);
         return;
     }
 
     const measurement::Vec3d direction = measurement::normalize(tail->pointPatientMm - head->pointPatientMm);
     const double lengthMm = measurement::length(tail->pointPatientMm - head->pointPatientMm);
     if (!isFiniteVec(direction) || lengthMm <= 1.0) {
-        statusBar()->showMessage("DRR placement failed: reconstructed instrument is too short.", 6000);
+        statusBar()->showMessage("DRR 放置失败：重建出的器械过短。", 6000);
         return;
     }
 
@@ -296,7 +296,7 @@ void MprPlanVerificationWindow::tryCreateInstrumentFromDrrLines()
     selectInstrumentById(id);
     (void)jumpToInstrumentPlanningPose(id);
     syncSpinBoxesFromSelectedInstrument();
-    statusBar()->showMessage("DRR instrument created from the unified AP/LAT plan.", 5000);
+    statusBar()->showMessage("已根据 AP/LAT 联合规划创建 DRR 器械。", 5000);
     refreshAll(true);
 }
 
@@ -327,7 +327,7 @@ void MprPlanVerificationWindow::handleDrrInstrumentDragged(
         return;
     }
     if (instrument->locked) {
-        statusBar()->showMessage("Locked instruments cannot be edited from DRR.", 4000);
+        statusBar()->showMessage("锁定的器械不能通过 DRR 编辑。", 4000);
         return;
     }
 

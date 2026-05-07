@@ -125,11 +125,11 @@ struct MeasurementAngleArcInfo {
 {
     switch (plane) {
     case measurement::MprPlane::Axial:
-        return "Axial";
+        return "轴位";
     case measurement::MprPlane::Sagittal:
-        return "Sagittal";
+        return "矢状位";
     case measurement::MprPlane::Coronal:
-        return "Coronal";
+        return "冠状位";
     }
     return "MPR";
 }
@@ -138,13 +138,13 @@ struct MeasurementAngleArcInfo {
 {
     switch (mode) {
     case measurement::MeasurementMode::Navigate:
-        return "Navigate";
+        return "浏览";
     case measurement::MeasurementMode::Distance:
-        return "Distance";
+        return "距离";
     case measurement::MeasurementMode::Angle:
-        return "Angle";
+        return "角度";
     }
-    return "Navigate";
+    return "浏览";
 }
 
 [[nodiscard]] double clampDouble(double value, double minValue, double maxValue)
@@ -631,7 +631,7 @@ void drawMeasurementLabels(
 
 class ScopedModalBusyDialog {
 public:
-    ScopedModalBusyDialog(QWidget* parent, QString labelText, QString windowTitle = "Please Wait")
+    ScopedModalBusyDialog(QWidget* parent, QString labelText, QString windowTitle = "请稍候")
         : m_dialog(new QProgressDialog(std::move(labelText), QString(), 0, 0, parent))
     {
         m_dialog->setWindowTitle(std::move(windowTitle));
@@ -696,10 +696,10 @@ private:
 
 [[nodiscard]] QString instrumentText(const measurement::Instrument& instrument)
 {
-    const QString type = instrument.type == measurement::InstrumentType::GuidePin ? "Guide pin" : "Pedicle screw";
+    const QString type = instrument.type == measurement::InstrumentType::GuidePin ? "导针" : "椎弓根螺钉";
     const QString flags = QString("%1%2")
-                              .arg(instrument.visible ? "visible" : "hidden")
-                              .arg(instrument.locked ? ", locked" : "");
+                              .arg(instrument.visible ? "可见" : "隐藏")
+                              .arg(instrument.locked ? "，锁定" : "");
     return QString("%1  %2 mm x %3 mm  %4")
         .arg(type)
         .arg(instrument.lengthMm, 0, 'f', 1)
@@ -815,7 +815,7 @@ void MprPlanVerificationWindow::loadStartupVolume()
     // Startup should be fast and deterministic: show the built-in phantom first
     // and leave DICOM loading as an explicit user action.
     loadSyntheticVolume();
-    statusBar()->showMessage("Loaded synthetic phantom.", 6000);
+    statusBar()->showMessage("已加载合成体模。", 6000);
 }
 
 void MprPlanVerificationWindow::loadDicomFolder()
@@ -826,7 +826,7 @@ void MprPlanVerificationWindow::loadDicomFolder()
     }
     const QString folder = QFileDialog::getExistingDirectory(
         this,
-        "Load CT DICOM folder",
+        "加载 CT DICOM 文件夹",
         initialDirectory);
     if (folder.isEmpty()) {
         return;
@@ -835,22 +835,22 @@ void MprPlanVerificationWindow::loadDicomFolder()
     QString failureMessage;
     if (!tryLoadDicomFolder(folder, &failureMessage)) {
         statusBar()->showMessage(failureMessage, 8000);
-        QMessageBox::warning(this, "Load DICOM failed", failureMessage);
+        QMessageBox::warning(this, "DICOM 加载失败", failureMessage);
         return;
     }
 
     if (m_loadDicomButton != nullptr) {
         m_loadDicomButton->setEnabled(false);
     }
-    statusBar()->showMessage(QString("Loaded DICOM: %1").arg(QDir::toNativeSeparators(folder)), 6000);
+    statusBar()->showMessage(QString("已加载 DICOM：%1").arg(QDir::toNativeSeparators(folder)), 6000);
 }
 
 bool MprPlanVerificationWindow::tryLoadDicomFolder(const QString& folder, QString* failureMessage)
 {
     ScopedModalBusyDialog busyDialog(
         this,
-        QString("Loading DICOM from %1...").arg(QDir::toNativeSeparators(folder)),
-        "Loading DICOM");
+        QString("正在从 %1 加载 DICOM...").arg(QDir::toNativeSeparators(folder)),
+        "正在加载 DICOM");
     measurement::DicomVolumeLoader loader;
     const auto loaded = loader.loadFolder(folder.toStdString());
     if (!loaded.ok()) {
@@ -935,7 +935,7 @@ void MprPlanVerificationWindow::activateLoadedVolumeData()
 
 void MprPlanVerificationWindow::saveProject()
 {
-    const QString path = QFileDialog::getSaveFileName(this, "Save project", {}, "MPR Project (*.mprproj)");
+    const QString path = QFileDialog::getSaveFileName(this, "保存项目", {}, "MPR 项目 (*.mprproj)");
     if (path.isEmpty()) {
         return;
     }
@@ -944,7 +944,7 @@ void MprPlanVerificationWindow::saveProject()
         statusBar()->showMessage(QString::fromStdString(result.error().message + ": " + result.error().detail), 8000);
         return;
     }
-    statusBar()->showMessage("Project saved", 4000);
+    statusBar()->showMessage("项目已保存", 4000);
 }
 
 void MprPlanVerificationWindow::resetCrosshairToVolumeCenter(bool refreshViews)
@@ -1056,7 +1056,7 @@ void MprPlanVerificationWindow::applyPatientPosition(bool prone, bool feetFirst)
         return;
     }
 
-    ScopedModalBusyDialog busyDialog(this, "Updating patient position...", "Updating Patient Position");
+    ScopedModalBusyDialog busyDialog(this, "正在更新患者体位...", "正在更新患者体位");
 
     const auto applyRigidRotation = [&](measurement::Vec3d axis, double angleRad) {
         const auto transformPoint = [&](measurement::Vec3d point) {
@@ -1217,7 +1217,7 @@ void MprPlanVerificationWindow::setFreeObliqueMode(bool enabled)
 {
     if (m_freeObliqueMode == enabled) {
         if (m_freeObliqueButton != nullptr) {
-            m_freeObliqueButton->setText(enabled ? "Free oblique: On" : "Free oblique: Off");
+            m_freeObliqueButton->setText(enabled ? "自由斜切：开" : "自由斜切：关");
             if (m_freeObliqueButton->isChecked() != enabled) {
                 m_freeObliqueButton->setChecked(enabled);
             }
@@ -1227,7 +1227,7 @@ void MprPlanVerificationWindow::setFreeObliqueMode(bool enabled)
 
     m_freeObliqueMode = enabled;
     if (m_freeObliqueButton != nullptr) {
-        m_freeObliqueButton->setText(enabled ? "Free oblique: On" : "Free oblique: Off");
+        m_freeObliqueButton->setText(enabled ? "自由斜切：开" : "自由斜切：关");
         if (m_freeObliqueButton->isChecked() != enabled) {
             m_freeObliqueButton->setChecked(enabled);
         }
@@ -1237,7 +1237,7 @@ void MprPlanVerificationWindow::setFreeObliqueMode(bool enabled)
         orthogonalizePlaneFrames(m_activeMprPlane, m_activeCrosshairLinePlane);
         alignEditingInstrumentToCrosshairLine(m_activeMprPlane, m_activeCrosshairLinePlane);
     }
-    statusBar()->showMessage(enabled ? "Free oblique mode enabled" : "Orthogonal MPR mode enabled", 4000);
+    statusBar()->showMessage(enabled ? "已启用自由斜切模式" : "已启用正交 MPR 模式", 4000);
     refreshAll(m_instrumentEditActive);
 }
 
@@ -1362,7 +1362,7 @@ void MprPlanVerificationWindow::selectInstrumentById(const std::string& id)
 void MprPlanVerificationWindow::refreshStatus()
 {
     const measurement::Size3i dims = m_volume.metadata.dimensions;
-    m_volumeLabel->setText(QString("Volume: %1 x %2 x %3, spacing %4, HU [%5, %6]\nPatient position: %7\nSource: %8")
+    m_volumeLabel->setText(QString("体数据：%1 x %2 x %3，间距 %4，HU [%5, %6]\n患者体位：%7\n来源：%8")
                                .arg(dims.x)
                                .arg(dims.y)
                                .arg(dims.z)
@@ -1373,23 +1373,23 @@ void MprPlanVerificationWindow::refreshStatus()
                                .arg(QString::fromStdString(m_volume.sourceFolder)));
 
     const QString editMode = m_instrumentEditActive
-        ? QString("editing %1").arg(QString::fromStdString(m_editingInstrumentId))
-        : QString("off");
-    QString drrPlacement = "off";
+        ? QString("正在编辑 %1").arg(QString::fromStdString(m_editingInstrumentId))
+        : QString("关闭");
+    QString drrPlacement = "关闭";
     if (m_drrPlacementType.has_value()) {
-        drrPlacement = *m_drrPlacementType == measurement::InstrumentType::GuidePin ? "Guide pin" : "Pedicle screw";
+        drrPlacement = *m_drrPlacementType == measurement::InstrumentType::GuidePin ? "导针" : "椎弓根螺钉";
         drrPlacement += m_pendingDrrLines[0].has_value()
-            ? " (AP fixed, draw constrained LAT)"
-            : " (draw AP first)";
+            ? "（AP 已固定，绘制受限 LAT）"
+            : "（先绘制 AP）";
     }
     const QString pendingMeasurement = m_pendingMeasurementPlane.has_value()
-        ? QString(", pending %1/%2")
+        ? QString("，待完成 %1/%2")
               .arg(m_measurementStateMachine.pendingPoints().size())
               .arg(m_measurementMode == measurement::MeasurementMode::Angle ? 4 : 2)
         : QString();
-    m_statusLabel->setText(QString("Active view: %1\nMPR mode: %2\nMeasurement: %3%4 (%5)\nInstrument edit: %6\nDRR placement: %7\nPlan instruments: %8")
-                               .arg(QString::fromUtf8(planeTitle(m_activeMprPlane)))
-                               .arg(m_freeObliqueMode ? "Free oblique" : "Orthogonal")
+    m_statusLabel->setText(QString("当前视图：%1\nMPR 模式：%2\n测量：%3%4（%5）\n器械编辑：%6\nDRR 放置：%7\n规划器械：%8")
+                                .arg(QString::fromUtf8(planeTitle(m_activeMprPlane)))
+                                .arg(m_freeObliqueMode ? "自由斜切" : "正交")
                                .arg(QString::fromUtf8(measurementModeName(m_measurementMode)))
                                .arg(pendingMeasurement)
                                .arg(m_measurementStore.size())
@@ -1639,7 +1639,7 @@ void MprPlanVerificationWindow::toggleInstrumentEdit()
 
     const std::string id = selectedInstrumentId();
     if (id.empty()) {
-        statusBar()->showMessage("Select an instrument before editing", 4000);
+        statusBar()->showMessage("请先选择要编辑的器械", 4000);
         return;
     }
     beginInstrumentEdit(id);
@@ -1649,11 +1649,11 @@ void MprPlanVerificationWindow::beginInstrumentEdit(const std::string& id)
 {
     const measurement::Instrument* instrument = m_plan.findInstrument(id);
     if (instrument == nullptr) {
-        statusBar()->showMessage("Selected instrument was not found", 4000);
+        statusBar()->showMessage("未找到选中的器械", 4000);
         return;
     }
     if (instrument->locked) {
-        statusBar()->showMessage("Locked instruments cannot be edited", 5000);
+        statusBar()->showMessage("锁定的器械不能编辑", 5000);
         return;
     }
 
@@ -1690,8 +1690,8 @@ bool MprPlanVerificationWindow::requestFinishInstrumentEdit()
 
     const QMessageBox::StandardButton choice = QMessageBox::question(
         this,
-        "Instrument edit",
-        "Save changes to the selected instrument?",
+        "器械编辑",
+        "是否保存对选中器械的修改？",
         QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
         QMessageBox::Yes);
     if (choice == QMessageBox::Cancel) {
@@ -1727,7 +1727,7 @@ void MprPlanVerificationWindow::updateInstrumentEditButton()
     if (m_editInstrumentButton == nullptr) {
         return;
     }
-    m_editInstrumentButton->setText(m_instrumentEditActive ? "Finish edit" : "Edit selected");
+    m_editInstrumentButton->setText(m_instrumentEditActive ? "完成编辑" : "编辑选中项");
 }
 
 void MprPlanVerificationWindow::activateMprPlane(measurement::MprPlane plane)

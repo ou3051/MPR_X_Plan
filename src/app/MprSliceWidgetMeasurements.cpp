@@ -507,7 +507,7 @@ void MprSliceWidget::drawMeasurementPreview(QPainter& painter)
         previewLabel = QString::fromStdString(
             measurement::MeasurementAnnotation::makeDistance(previewPoints[0], previewPoints[1]).measurementText());
     } else if (m_measurementMode == measurement::MeasurementMode::Angle) {
-        previewLabel = "Angle";
+        previewLabel = "角度";
         if (previewPoints.size() == 4) {
             const auto annotation = measurement::MeasurementAnnotation::tryMakeAngle(
                 previewPoints[0],
