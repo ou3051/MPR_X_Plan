@@ -2,6 +2,8 @@
 
 #include "DrrInteractionGeometry.h"
 #include "InstrumentRenderModel.h"
+#include "MprSliceWidget.h"
+#include "PlanSceneWidget.h"
 #include "XrayDisplayWidget.h"
 #include "measurement/dicom/DicomVolumeLoader.h"
 #include "measurement/drr/CpuDrrEngine.h"

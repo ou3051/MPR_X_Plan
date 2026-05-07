@@ -1,5 +1,7 @@
 #include "MprPlanVerificationWindow.h"
 
+#include "MprSliceWidget.h"
+
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>

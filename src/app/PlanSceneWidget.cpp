@@ -1,4 +1,6 @@
-#include "MprPlanVerificationWindow.h"
+#include "PlanSceneWidget.h"
+
+#include "InstrumentRenderModel.h"
 
 #include <QVTKOpenGLNativeWidget.h>
 #include <QVBoxLayout>

@@ -24,11 +24,13 @@ measurement_apply_common_options(measurement_app_support)
 
 add_executable(measurement_app
     MprSliceWidget.cpp
+    MprSliceWidget.h
     MprPlanVerificationWindow.cpp
     MprPlanVerificationWindow.h
     MprPlanVerificationWindowMeasurements.cpp
     MprPlanVerificationWindowUi.cpp
     PlanSceneWidget.cpp
+    PlanSceneWidget.h
     XrayDisplayWidget.cpp
     XrayDisplayWidget.h
     main.cpp

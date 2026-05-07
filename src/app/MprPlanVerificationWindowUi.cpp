@@ -1,5 +1,7 @@
 #include "MprPlanVerificationWindow.h"
 
+#include "MprSliceWidget.h"
+#include "PlanSceneWidget.h"
 #include "XrayDisplayWidget.h"
 
 #include <QComboBox>

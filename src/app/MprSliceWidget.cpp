@@ -1,4 +1,4 @@
-#include "MprPlanVerificationWindow.h"
+#include "MprSliceWidget.h"
 
 #include "InstrumentRenderModel.h"
 #include "measurement/core/MeasurementVisibility.h"
