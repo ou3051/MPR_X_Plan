@@ -198,20 +198,4 @@ MeasurementVisibilityResult evaluate(
     return result;
 }
 
-bool isMeasurementControlVisible(const MeasurementVisibilityResult& result)
-{
-    if (result.level != MeasurementVisibilityLevel::FullDisplay) {
-        return false;
-    }
-
-    switch (result.type) {
-    case MeasurementType::Distance:
-        return result.fullWorldPointsPatientMm.size() == 2U;
-    case MeasurementType::Angle:
-        return result.fullWorldPointsPatientMm.size() == 4U;
-    }
-
-    return false;
-}
-
 }  // namespace measurement::measurement_visibility

@@ -133,23 +133,4 @@ TEST(MeasurementVisibilityTests, EvaluatesFullAndSectionDisplayForCurrentSlice)
     EXPECT_EQ(result.level, MeasurementVisibilityLevel::Hidden);
 }
 
-TEST(MeasurementVisibilityTests, ShowsControlsOnlyForFullMeasurementPosition)
-{
-    MeasurementAnnotation distance = MeasurementAnnotation::makeDistance({0.0, 0.0, 0.0}, {10.0, 0.0, 0.0});
-
-    auto result = measurement_visibility::evaluate(distance, axialSlice(), MeasurementViewType::Axial);
-    EXPECT_EQ(result.level, MeasurementVisibilityLevel::FullDisplay);
-    EXPECT_TRUE(measurement_visibility::isMeasurementControlVisible(result));
-
-    distance = MeasurementAnnotation::makeDistance({0.0, 0.0, -5.0}, {0.0, 0.0, 5.0});
-    result = measurement_visibility::evaluate(distance, axialSlice(), MeasurementViewType::Axial);
-    EXPECT_EQ(result.level, MeasurementVisibilityLevel::SectionIndicator);
-    EXPECT_FALSE(measurement_visibility::isMeasurementControlVisible(result));
-
-    distance = MeasurementAnnotation::makeDistance({0.0, 0.0, 5.0}, {10.0, 0.0, 5.0});
-    result = measurement_visibility::evaluate(distance, axialSlice(), MeasurementViewType::Axial);
-    EXPECT_EQ(result.level, MeasurementVisibilityLevel::Hidden);
-    EXPECT_FALSE(measurement_visibility::isMeasurementControlVisible(result));
-}
-
 }  // namespace measurement
