@@ -1,6 +1,8 @@
 add_library(measurement_app_support STATIC
     DrrInteractionGeometry.cpp
     DrrInteractionGeometry.h
+    DrrRenderRequest.cpp
+    DrrRenderRequest.h
     InstrumentRenderModel.cpp
     InstrumentRenderModel.h
 )

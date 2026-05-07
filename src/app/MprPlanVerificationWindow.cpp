@@ -81,7 +81,6 @@ namespace measurement_app {
 namespace {
 
 constexpr int kSlicePixels = 320;
-constexpr double kDefaultPixelSpacingMm = 1.0;
 constexpr double kCrosshairHitTolerancePx = 8.0;
 constexpr double kCrosshairCenterRadiusPx = 10.0;
 constexpr double kMinZoom = 0.25;
@@ -98,7 +97,6 @@ constexpr double kRotationHandleBarGapPx = 5.0;
 constexpr double kOrientationLabelMarginPx = 10.0;
 constexpr double kOrientationLabelInsetPx = 14.0;
 constexpr double kDrrViewportPaddingScale = 1.02;
-constexpr int kMaxDrrDetectorSamples = 4096;
 constexpr double kPi = 3.14159265358979323846;
 
 struct MeasurementAngleArcInfo {
@@ -761,89 +759,6 @@ private:
         label.append(components[1].label);
     }
     return label;
-}
-
-[[nodiscard]] bool buildDrrRenderRequest(
-    const measurement::VolumeData* volume,
-    measurement::XrayPreset preset,
-    const DrrUiSettings& uiSettings,
-    measurement::ProjectionParams& projection,
-    measurement::DrrRenderSettings& renderSettings)
-{
-    if (volume == nullptr || !volume->image) {
-        return false;
-    }
-
-    const measurement::Vec3d boundsMin = volume->transform.boundsMinPatientMm;
-    const measurement::Vec3d boundsMax = volume->transform.boundsMaxPatientMm;
-    if (!isFiniteVec(boundsMin) || !isFiniteVec(boundsMax)) {
-        return false;
-    }
-
-    const measurement::Vec3d center = (boundsMin + boundsMax) * 0.5;
-    const measurement::Vec3d extent = boundsMax - boundsMin;
-    const double maxExtent = std::max({extent.x, extent.y, extent.z, 1.0});
-    const double sidMm = std::max(uiSettings.sidMm, 2.0);
-    const double sodMm = std::clamp(uiSettings.sodMm, 1.0, sidMm - 1.0e-3);
-
-    projection = {};
-    projection.sourcePosPatientMm = center;
-    projection.detectorCenterPatientMm = center;
-    projection.sidMm = sidMm;
-    projection.sodMm = sodMm;
-
-    if (preset == measurement::XrayPreset::LAT) {
-        projection.sourcePosPatientMm = center + measurement::Vec3d{-sodMm, 0.0, 0.0};
-        projection.detectorCenterPatientMm = center + measurement::Vec3d{sidMm - sodMm, 0.0, 0.0};
-        projection.detectorUPatientUnit = {0.0, 1.0, 0.0};
-        projection.detectorVPatientUnit = {0.0, 0.0, 1.0};
-        projection.primaryAngleDeg = 90.0;
-    } else {
-        projection.sourcePosPatientMm = center + measurement::Vec3d{0.0, -sodMm, 0.0};
-        projection.detectorCenterPatientMm = center + measurement::Vec3d{0.0, sidMm - sodMm, 0.0};
-        projection.detectorUPatientUnit = {1.0, 0.0, 0.0};
-        projection.detectorVPatientUnit = {0.0, 0.0, 1.0};
-        projection.primaryAngleDeg = 0.0;
-    }
-
-    const double detectorWidthMm = std::max(uiSettings.detectorWidthMm, 1.0);
-    const double detectorHeightMm = std::max(uiSettings.detectorHeightMm, 1.0);
-    // The UI detector width/height are the real detector plane dimensions in
-    // millimeters.  DRR image resolution is derived from those dimensions and a
-    // square detector pixel spacing, so changing width/height changes the
-    // physical field of view instead of merely stretching the output image.
-    double detectorPixelSpacingMm = uiSettings.pixelSpacingMm > 0.0
-        ? uiSettings.pixelSpacingMm
-        : kDefaultPixelSpacingMm;
-    if (!std::isfinite(detectorPixelSpacingMm) || detectorPixelSpacingMm <= 0.0) {
-        detectorPixelSpacingMm = kDefaultPixelSpacingMm;
-    }
-    // Keep the detector plane dimensions authoritative.  If a very small pixel
-    // spacing would exceed the renderer's sample cap, use a coarser effective
-    // spacing rather than clipping the physical detector plane.
-    detectorPixelSpacingMm = std::max({
-        detectorPixelSpacingMm,
-        detectorWidthMm / static_cast<double>(kMaxDrrDetectorSamples),
-        detectorHeightMm / static_cast<double>(kMaxDrrDetectorSamples),
-    });
-    renderSettings.width = std::max(1, static_cast<int>(std::llround(detectorWidthMm / detectorPixelSpacingMm)));
-    renderSettings.height = std::max(1, static_cast<int>(std::llround(detectorHeightMm / detectorPixelSpacingMm)));
-    renderSettings.stepMm = std::max(uiSettings.rayStepMm, 1.0e-6);
-    renderSettings.outputLineIntegral = true;
-    renderSettings.windowCenter = uiSettings.windowCenter > 0.0 ? uiSettings.windowCenter : maxExtent * 0.55;
-    renderSettings.windowWidth = uiSettings.windowWidth > 0.0 ? uiSettings.windowWidth : std::max(maxExtent * 1.1, 1.0);
-    renderSettings.gamma = std::max(uiSettings.gamma, 1.0e-6);
-    renderSettings.huOffset = uiSettings.huOffset;
-    renderSettings.huScale = std::max(uiSettings.huScale, 1.0e-6);
-
-    projection.detectorWidth = renderSettings.width;
-    projection.detectorHeight = renderSettings.height;
-    projection.pixelSpacingMm = detectorPixelSpacingMm;
-    if (!std::isfinite(projection.pixelSpacingMm) || projection.pixelSpacingMm <= 0.0) {
-        projection.pixelSpacingMm = 1.0;
-    }
-
-    return true;
 }
 
 [[nodiscard]] QString instrumentText(const measurement::Instrument& instrument)
@@ -2111,7 +2026,7 @@ void MprPlanVerificationWindow::buildUi()
     m_statusLabel->setWordWrap(true);
     statusLayout->addWidget(m_statusLabel);
     drrPanelLayout->addWidget(statusGroup);
-    auto* drrGroup = new QGroupBox("DRR 鍙傛暟", drrPanel);
+    auto* drrGroup = new QGroupBox("DRR Parameters", drrPanel);
     auto* drrGroupLayout = new QVBoxLayout(drrGroup);
     drrGroup->setTitle("DRR Parameters");
     drrGroupLayout->setContentsMargins(9, 9, 9, 9);

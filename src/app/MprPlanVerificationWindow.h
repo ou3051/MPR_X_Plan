@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DrrInteractionGeometry.h"
+#include "DrrRenderRequest.h"
 #include "InstrumentRenderModel.h"
 #include "measurement/core/Instrument.h"
 #include "measurement/core/MeasurementAnnotation.h"
@@ -232,20 +233,6 @@ private:
     std::array<measurement::ProjectionParams, 2> m_drrProjections{};
     std::array<bool, 2> m_drrProjectionEnabled{false, false};
     std::array<QImage, 2> m_drrImages{};
-};
-
-struct DrrUiSettings {
-    double sidMm = 1000.0;
-    double sodMm = 700.0;
-    double detectorWidthMm = 320.0;
-    double detectorHeightMm = 240.0;
-    double pixelSpacingMm = 0.0;
-    double rayStepMm = 1.0;
-    double windowCenter = 0.0;
-    double windowWidth = 0.0;
-    double gamma = 1.0;
-    double huOffset = 0.0;
-    double huScale = 1.0;
 };
 
 enum class DrrInteractionTarget {
