@@ -26,6 +26,7 @@ add_executable(measurement_app
     MprSliceWidget.cpp
     MprPlanVerificationWindow.cpp
     MprPlanVerificationWindow.h
+    MprPlanVerificationWindowUi.cpp
     PlanSceneWidget.cpp
     XrayDisplayWidget.cpp
     XrayDisplayWidget.h
