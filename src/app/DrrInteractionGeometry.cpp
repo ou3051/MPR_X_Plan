@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace measurement_app {
 namespace {
@@ -217,6 +218,119 @@ std::optional<measurement::Vec3d> raySphereIntersectionNearDirection(
         }
     }
     return bestPoint;
+}
+
+std::optional<DrrDetectorLine> clipDetectorLineToBounds(
+    DrrDetectorPoint point,
+    DrrDetectorPoint direction,
+    int detectorWidth,
+    int detectorHeight)
+{
+    const double dx = direction.x;
+    const double dy = direction.y;
+    if (dx * dx + dy * dy <= kEpsilon || detectorWidth <= 0 || detectorHeight <= 0) {
+        return std::nullopt;
+    }
+
+    const double minX = -0.5;
+    const double maxX = static_cast<double>(detectorWidth) - 0.5;
+    const double minY = -0.5;
+    const double maxY = static_cast<double>(detectorHeight) - 0.5;
+    std::vector<DrrDetectorPoint> intersections;
+    const auto addIfUnique = [&](DrrDetectorPoint candidate) {
+        if (candidate.x < minX - 1.0e-6 || candidate.x > maxX + 1.0e-6
+            || candidate.y < minY - 1.0e-6 || candidate.y > maxY + 1.0e-6) {
+            return;
+        }
+        for (const DrrDetectorPoint& existing : intersections) {
+            if (std::hypot(existing.x - candidate.x, existing.y - candidate.y) <= 1.0e-5) {
+                return;
+            }
+        }
+        intersections.push_back(candidate);
+    };
+
+    if (std::abs(dx) > kEpsilon) {
+        const double tMinX = (minX - point.x) / dx;
+        addIfUnique({minX, point.y + dy * tMinX});
+        const double tMaxX = (maxX - point.x) / dx;
+        addIfUnique({maxX, point.y + dy * tMaxX});
+    }
+    if (std::abs(dy) > kEpsilon) {
+        const double tMinY = (minY - point.y) / dy;
+        addIfUnique({point.x + dx * tMinY, minY});
+        const double tMaxY = (maxY - point.y) / dy;
+        addIfUnique({point.x + dx * tMaxY, maxY});
+    }
+
+    if (intersections.size() < 2) {
+        return std::nullopt;
+    }
+    return DrrDetectorLine{intersections[0], intersections[1]};
+}
+
+DrrDetectorPoint closestDetectorPointOnSegment(
+    DrrDetectorPoint point,
+    const DrrDetectorLine& segment)
+{
+    const double dx = segment.tail.x - segment.head.x;
+    const double dy = segment.tail.y - segment.head.y;
+    const double len2 = dx * dx + dy * dy;
+    if (len2 <= kEpsilon) {
+        return point;
+    }
+    const double t = std::clamp(
+        ((point.x - segment.head.x) * dx + (point.y - segment.head.y) * dy) / len2,
+        0.0,
+        1.0);
+    return {segment.head.x + dx * t, segment.head.y + dy * t};
+}
+
+std::optional<DrrDetectorLine> projectPatientRayToDetectorConstraint(
+    const DrrInteractionRay& sourceRay,
+    const measurement::ProjectionParams& targetProjection)
+{
+    const measurement::Vec3d u = measurement::normalize(targetProjection.detectorUPatientUnit);
+    const measurement::Vec3d v = measurement::normalize(targetProjection.detectorVPatientUnit);
+    const measurement::Vec3d detectorNormal = measurement::normalize(measurement::cross(u, v));
+    const measurement::Vec3d rayDirection = measurement::normalize(sourceRay.directionPatientUnit);
+    const measurement::Vec3d sourceToRayOrigin = sourceRay.originPatientMm - targetProjection.sourcePosPatientMm;
+    const measurement::Vec3d epipolarNormal = measurement::normalize(measurement::cross(rayDirection, sourceToRayOrigin));
+    const measurement::Vec3d lineDirectionPatient = measurement::normalize(measurement::cross(epipolarNormal, detectorNormal));
+    if (!isFinite(u) || !isFinite(v) || !isFinite(detectorNormal)
+        || !isFinite(epipolarNormal) || !isFinite(lineDirectionPatient)
+        || measurement::length(lineDirectionPatient) <= 1.0e-6) {
+        return std::nullopt;
+    }
+
+    const double epipolarD = measurement::dot(epipolarNormal, sourceRay.originPatientMm);
+    const double detectorD = measurement::dot(detectorNormal, targetProjection.detectorCenterPatientMm);
+    const measurement::Vec3d pointOnIntersection =
+        (measurement::cross(detectorNormal, lineDirectionPatient) * epipolarD
+         + measurement::cross(lineDirectionPatient, epipolarNormal) * detectorD)
+        / std::max(measurement::dot(lineDirectionPatient, lineDirectionPatient), kEpsilon);
+    if (!isFinite(pointOnIntersection)) {
+        return std::nullopt;
+    }
+
+    const measurement::Vec3d delta = pointOnIntersection - targetProjection.detectorCenterPatientMm;
+    const DrrDetectorPoint detectorPoint{
+        measurement::dot(delta, u) / targetProjection.pixelSpacingMm
+            + static_cast<double>(targetProjection.detectorWidth) * 0.5
+            - 0.5,
+        measurement::dot(delta, v) / targetProjection.pixelSpacingMm
+            + static_cast<double>(targetProjection.detectorHeight) * 0.5
+            - 0.5,
+    };
+    const DrrDetectorPoint detectorDirection{
+        measurement::dot(lineDirectionPatient, u) / targetProjection.pixelSpacingMm,
+        measurement::dot(lineDirectionPatient, v) / targetProjection.pixelSpacingMm,
+    };
+    return clipDetectorLineToBounds(
+        detectorPoint,
+        detectorDirection,
+        targetProjection.detectorWidth,
+        targetProjection.detectorHeight);
 }
 
 double distancePointToSegmentPx(

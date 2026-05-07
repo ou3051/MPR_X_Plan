@@ -54,6 +54,20 @@ struct DrrRayClosestPoint {
     double radiusMm,
     measurement::Vec3d preferredDirectionPatientUnit);
 
+[[nodiscard]] std::optional<DrrDetectorLine> clipDetectorLineToBounds(
+    DrrDetectorPoint point,
+    DrrDetectorPoint direction,
+    int detectorWidth,
+    int detectorHeight);
+
+[[nodiscard]] DrrDetectorPoint closestDetectorPointOnSegment(
+    DrrDetectorPoint point,
+    const DrrDetectorLine& segment);
+
+[[nodiscard]] std::optional<DrrDetectorLine> projectPatientRayToDetectorConstraint(
+    const DrrInteractionRay& sourceRay,
+    const measurement::ProjectionParams& targetProjection);
+
 [[nodiscard]] double distancePointToSegmentPx(
     DrrDetectorPoint point,
     DrrDetectorPoint segmentStart,

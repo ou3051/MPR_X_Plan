@@ -135,3 +135,58 @@ TEST(DrrInteractionGeometryTests, TailDragSphereIntersectionKeepsHeadAndLength)
     EXPECT_NEAR(projected->x, targetPixel->x, 1.0e-5);
     EXPECT_NEAR(projected->y, targetPixel->y, 1.0e-5);
 }
+
+TEST(DrrInteractionGeometryTests, ClipDetectorLineToBounds_ReturnsDetectorSpan)
+{
+    const auto line = measurement_app::clipDetectorLineToBounds(
+        {4.5, 3.5},
+        {1.0, 0.0},
+        10,
+        8);
+    ASSERT_TRUE(line.has_value());
+    EXPECT_NEAR(line->head.x, -0.5, 1.0e-6);
+    EXPECT_NEAR(line->head.y, 3.5, 1.0e-6);
+    EXPECT_NEAR(line->tail.x, 9.5, 1.0e-6);
+    EXPECT_NEAR(line->tail.y, 3.5, 1.0e-6);
+}
+
+TEST(DrrInteractionGeometryTests, ClosestDetectorPointOnSegment_ClampsToSegment)
+{
+    const measurement_app::DrrDetectorLine segment{{2.0, 3.0}, {8.0, 3.0}};
+
+    const measurement_app::DrrDetectorPoint inside =
+        measurement_app::closestDetectorPointOnSegment({5.0, 9.0}, segment);
+    EXPECT_NEAR(inside.x, 5.0, 1.0e-6);
+    EXPECT_NEAR(inside.y, 3.0, 1.0e-6);
+
+    const measurement_app::DrrDetectorPoint outside =
+        measurement_app::closestDetectorPointOnSegment({12.0, 9.0}, segment);
+    EXPECT_NEAR(outside.x, 8.0, 1.0e-6);
+    EXPECT_NEAR(outside.y, 3.0, 1.0e-6);
+}
+
+TEST(DrrInteractionGeometryTests, ProjectPatientRayToDetectorConstraint_ContainsMatchingLatPixel)
+{
+    const measurement::ProjectionParams ap = makeApProjection();
+    const measurement::ProjectionParams lat = makeLatProjection();
+    const measurement::Vec3d point{14.0, -22.0, 31.0};
+
+    const auto apPixel = measurement_app::projectPatientToDetectorPixel(ap, point);
+    const auto latPixel = measurement_app::projectPatientToDetectorPixel(lat, point);
+    ASSERT_TRUE(apPixel.has_value());
+    ASSERT_TRUE(latPixel.has_value());
+
+    const auto apRay = measurement_app::detectorPixelToPatientRay(ap, *apPixel);
+    ASSERT_TRUE(apRay.has_value());
+
+    const auto constraint = measurement_app::projectPatientRayToDetectorConstraint(*apRay, lat);
+    ASSERT_TRUE(constraint.has_value());
+
+    const measurement_app::DrrDetectorPoint closest =
+        measurement_app::closestDetectorPointOnSegment(*latPixel, *constraint);
+    EXPECT_LT(
+        measurement_app::distancePointToSegmentPx(*latPixel, constraint->head, constraint->tail),
+        0.05);
+    EXPECT_NEAR(closest.x, latPixel->x, 0.05);
+    EXPECT_NEAR(closest.y, latPixel->y, 0.05);
+}
