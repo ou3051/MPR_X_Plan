@@ -25,6 +25,7 @@ measurement_apply_common_options(measurement_app_support)
 add_executable(measurement_app
     MprSliceWidget.cpp
     MprSliceWidget.h
+    MprSliceWidgetMeasurements.cpp
     MprPlanVerificationWindow.cpp
     MprPlanVerificationWindowDrr.cpp
     MprPlanVerificationWindow.h
