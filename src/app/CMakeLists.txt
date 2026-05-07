@@ -21,6 +21,7 @@ add_library(measurement::app_support ALIAS measurement_app_support)
 measurement_apply_common_options(measurement_app_support)
 
 add_executable(measurement_app
+    MprSliceWidget.cpp
     MprPlanVerificationWindow.cpp
     MprPlanVerificationWindow.h
     PlanSceneWidget.cpp
