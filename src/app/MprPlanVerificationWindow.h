@@ -29,7 +29,6 @@
 #include <utility>
 #include <vector>
 
-class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
@@ -321,11 +320,8 @@ private:
     void refreshStatus();
     void refreshInstrumentList();
     void addInstrument(measurement::InstrumentType type);
-    void applyInstrumentEdits();
     void applyInstrumentPropertyEdits();
     void removeSelectedInstrument();
-    void setSelectedVisible(bool visible);
-    void setSelectedLocked(bool locked);
     [[nodiscard]] bool jumpToInstrumentPlanningPose(const std::string& id);
     void toggleInstrumentEdit();
     void beginInstrumentEdit(const std::string& id);

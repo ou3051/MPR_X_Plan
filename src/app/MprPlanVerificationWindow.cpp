@@ -100,8 +100,6 @@ constexpr double kOrientationLabelInsetPx = 14.0;
 constexpr double kDrrViewportPaddingScale = 1.02;
 constexpr int kMaxDrrDetectorSamples = 4096;
 constexpr double kPi = 3.14159265358979323846;
-constexpr auto kDefaultDicomFolder = R"(D:\code\dicom)";
-constexpr auto kValidatedDicomFolder = R"(D:\code\dicom_track_b1_contiguous_035_332)";
 
 struct MeasurementAngleArcInfo {
     bool valid = false;
@@ -559,14 +557,6 @@ void drawMeasurementLabels(
         return vector;
     }
     return vector - unitNormal * (2.0 * measurement::dot(vector, unitNormal));
-}
-
-[[nodiscard]] measurement::Vec3d reflectPointAcrossPlane(
-    measurement::Vec3d point,
-    measurement::Vec3d center,
-    measurement::Vec3d planeNormal)
-{
-    return center + reflectAcrossNormal(point - center, planeNormal);
 }
 
 [[nodiscard]] measurement::Vec3d volumeCenterPatient(const measurement::VolumeData& volume)
@@ -2230,247 +2220,6 @@ void MprSliceWidget::stepSlice(int steps)
     m_crosshairChanged(patient);
 }
 
-struct PlanSceneWidget::Impl {
-    QVTKOpenGLNativeWidget* vtkWidget = nullptr;
-    vtkSmartPointer<vtkGenericOpenGLRenderWindow> renderWindow;
-    vtkSmartPointer<vtkRenderer> renderer;
-    vtkSmartPointer<vtkImageData> volumeImage;
-    std::string lastVolumeSignature;
-    bool cameraInitialized = false;
-};
-
-PlanSceneWidget::PlanSceneWidget(QWidget* parent)
-    : QWidget(parent)
-    , m_impl(std::make_unique<Impl>())
-{
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-
-    m_impl->renderWindow = vtkSmartPointer<vtkGenericOpenGLRenderWindow>::New();
-    m_impl->renderer = vtkSmartPointer<vtkRenderer>::New();
-    m_impl->renderer->SetBackground(0.08, 0.09, 0.11);
-    m_impl->renderer->SetBackground2(0.16, 0.18, 0.22);
-    m_impl->renderer->GradientBackgroundOn();
-    m_impl->renderWindow->AddRenderer(m_impl->renderer);
-
-    m_impl->vtkWidget = new QVTKOpenGLNativeWidget(m_impl->renderWindow, this);
-    layout->addWidget(m_impl->vtkWidget);
-
-    vtkNew<vtkInteractorStyleTrackballCamera> style;
-    if (m_impl->vtkWidget->interactor() != nullptr) {
-        m_impl->vtkWidget->interactor()->SetInteractorStyle(style);
-    }
-}
-
-PlanSceneWidget::~PlanSceneWidget() = default;
-
-void PlanSceneWidget::setVolume(const measurement::VolumeData* volume)
-{
-    m_volume = volume;
-}
-
-void PlanSceneWidget::setPlan(const measurement::SurgicalPlan* plan)
-{
-    m_plan = plan;
-}
-
-void PlanSceneWidget::setSelectedInstrumentId(std::string id)
-{
-    m_selectedInstrumentId = std::move(id);
-}
-
-void PlanSceneWidget::setDrrProjections(
-    std::array<measurement::ProjectionParams, 2> projections,
-    std::array<bool, 2> enabled)
-{
-    m_drrProjections = projections;
-    m_drrProjectionEnabled = enabled;
-}
-
-void PlanSceneWidget::setDrrImages(std::array<QImage, 2> images)
-{
-    m_drrImages = std::move(images);
-}
-
-QSize PlanSceneWidget::minimumSizeHint() const
-{
-    return {320, 320};
-}
-
-std::string PlanSceneWidget::volumeSignature() const
-{
-    if (m_volume == nullptr) {
-        return {};
-    }
-    return volumeGeometrySignature(*m_volume, false);
-}
-
-void PlanSceneWidget::resetCamera()
-{
-    if (m_impl->renderer != nullptr) {
-        m_impl->renderer->ResetCamera();
-        m_impl->cameraInitialized = true;
-    }
-    if (m_impl->renderWindow != nullptr) {
-        m_impl->renderWindow->Render();
-    }
-}
-
-namespace {
-
-[[nodiscard]] std::array<double, 6> volumePatientBounds(const measurement::VolumeData& volume)
-{
-    const measurement::Size3i dimensions = volume.metadata.dimensions;
-    std::array<double, 6> bounds{
-        (std::numeric_limits<double>::max)(),
-        (std::numeric_limits<double>::lowest)(),
-        (std::numeric_limits<double>::max)(),
-        (std::numeric_limits<double>::lowest)(),
-        (std::numeric_limits<double>::max)(),
-        (std::numeric_limits<double>::lowest)(),
-    };
-    const std::array<double, 2> xs{0.0, static_cast<double>(std::max(dimensions.x - 1, 0))};
-    const std::array<double, 2> ys{0.0, static_cast<double>(std::max(dimensions.y - 1, 0))};
-    const std::array<double, 2> zs{0.0, static_cast<double>(std::max(dimensions.z - 1, 0))};
-    for (double x : xs) {
-        for (double y : ys) {
-            for (double z : zs) {
-                const measurement::Vec3d patient = measurement::voxelToPatient(volume.transform, {x, y, z});
-                bounds[0] = std::min(bounds[0], patient.x);
-                bounds[1] = std::max(bounds[1], patient.x);
-                bounds[2] = std::min(bounds[2], patient.y);
-                bounds[3] = std::max(bounds[3], patient.y);
-                bounds[4] = std::min(bounds[4], patient.z);
-                bounds[5] = std::max(bounds[5], patient.z);
-            }
-        }
-    }
-    return bounds;
-}
-
-[[nodiscard]] vtkSmartPointer<vtkImageData> makePatientVolumeImageData(const measurement::VolumeData& volume)
-{
-    if (!volume.image) {
-        return nullptr;
-    }
-
-    const measurement::Size3i dimensions = volume.metadata.dimensions;
-    if (dimensions.x <= 0 || dimensions.y <= 0 || dimensions.z <= 0) {
-        return nullptr;
-    }
-
-    const measurement::Vec3d row = measurement::normalize(volume.metadata.rowDirectionPatient);
-    const measurement::Vec3d column = measurement::normalize(volume.metadata.columnDirectionPatient);
-    const measurement::Vec3d slice = measurement::length(volume.metadata.sliceDirectionPatient) > 0.0
-        ? measurement::normalize(volume.metadata.sliceDirectionPatient)
-        : measurement::normalize(measurement::cross(row, column));
-
-    vtkSmartPointer<vtkImageData> image = vtkSmartPointer<vtkImageData>::New();
-    image->SetDimensions(dimensions.x, dimensions.y, dimensions.z);
-    image->SetSpacing(
-        volume.metadata.spacingMm.x,
-        volume.metadata.spacingMm.y,
-        volume.metadata.spacingMm.z);
-    image->SetOrigin(
-        volume.metadata.originPatientMm.x,
-        volume.metadata.originPatientMm.y,
-        volume.metadata.originPatientMm.z);
-    image->SetDirectionMatrix(
-        row.x, column.x, slice.x,
-        row.y, column.y, slice.y,
-        row.z, column.z, slice.z);
-    image->AllocateScalars(VTK_SHORT, 1);
-
-    for (int k = 0; k < dimensions.z; ++k) {
-        for (int j = 0; j < dimensions.y; ++j) {
-            for (int i = 0; i < dimensions.x; ++i) {
-                auto* voxel = static_cast<int16_t*>(image->GetScalarPointer(i, j, k));
-                *voxel = volume.image->voxelHu(i, j, k);
-            }
-        }
-    }
-    return image;
-}
-
-[[nodiscard]] vtkSmartPointer<vtkVolume> makeMedicalVolumeActor(vtkImageData* image)
-{
-    if (image == nullptr) {
-        return nullptr;
-    }
-
-    vtkNew<vtkSmartVolumeMapper> mapper;
-    mapper->SetInputData(image);
-    mapper->SetBlendModeToComposite();
-    mapper->SetRequestedRenderModeToGPU();
-
-    vtkNew<vtkColorTransferFunction> color;
-    color->AddRGBPoint(-1000.0, 0.0, 0.0, 0.0);
-    color->AddRGBPoint(-150.0, 0.18, 0.18, 0.2);
-    color->AddRGBPoint(180.0, 0.58, 0.55, 0.5);
-    color->AddRGBPoint(700.0, 0.86, 0.82, 0.72);
-    color->AddRGBPoint(1500.0, 1.0, 0.96, 0.86);
-
-    vtkNew<vtkPiecewiseFunction> opacity;
-    opacity->AddPoint(-1000.0, 0.0);
-    opacity->AddPoint(-250.0, 0.0);
-    opacity->AddPoint(100.0, 0.012);
-    opacity->AddPoint(350.0, 0.035);
-    opacity->AddPoint(700.0, 0.09);
-    opacity->AddPoint(1500.0, 0.18);
-
-    vtkNew<vtkVolumeProperty> property;
-    property->SetColor(color);
-    property->SetScalarOpacity(opacity);
-    property->SetInterpolationTypeToLinear();
-    property->ShadeOn();
-    property->SetAmbient(0.25);
-    property->SetDiffuse(0.72);
-    property->SetSpecular(0.18);
-    property->SetSpecularPower(12.0);
-
-    vtkSmartPointer<vtkVolume> actor = vtkSmartPointer<vtkVolume>::New();
-    actor->SetMapper(mapper);
-    actor->SetProperty(property);
-    return actor;
-}
-
-[[nodiscard]] vtkSmartPointer<vtkActor> makeInstrumentActor(
-    const InstrumentRenderMeshSegment& renderMesh)
-{
-    vtkNew<vtkPoints> points;
-    points->SetNumberOfPoints(static_cast<vtkIdType>(renderMesh.mesh.vertices.size()));
-    for (size_t index = 0; index < renderMesh.mesh.vertices.size(); ++index) {
-        const measurement::Vec3d vertex = renderMesh.mesh.vertices[index];
-        points->SetPoint(static_cast<vtkIdType>(index), vertex.x, vertex.y, vertex.z);
-    }
-
-    vtkNew<vtkCellArray> polys;
-    for (size_t index = 0; index + 2 < renderMesh.mesh.indices.size(); index += 3) {
-        const vtkIdType triangle[3]{
-            static_cast<vtkIdType>(renderMesh.mesh.indices[index]),
-            static_cast<vtkIdType>(renderMesh.mesh.indices[index + 1]),
-            static_cast<vtkIdType>(renderMesh.mesh.indices[index + 2]),
-        };
-        polys->InsertNextCell(3, triangle);
-    }
-
-    vtkNew<vtkPolyData> polyData;
-    polyData->SetPoints(points);
-    polyData->SetPolys(polys);
-
-    vtkNew<vtkPolyDataMapper> mapper;
-    mapper->SetInputData(polyData);
-
-    vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
-    actor->SetMapper(mapper);
-    const std::array<double, 3> color = renderMesh.segment.style.color;
-    actor->GetProperty()->SetColor(color[0], color[1], color[2]);
-    actor->GetProperty()->SetOpacity(renderMesh.segment.style.opacity);
-    actor->GetProperty()->SetSpecular(0.35);
-    actor->GetProperty()->SetSpecularPower(24.0);
-    return actor;
-}
-
 [[nodiscard]] vtkSmartPointer<vtkActor> makeLineActor(
     measurement::Vec3d start,
     measurement::Vec3d end,
@@ -2490,67 +2239,6 @@ namespace {
     actor->GetProperty()->SetColor(color[0], color[1], color[2]);
     actor->GetProperty()->SetLineWidth(lineWidth);
     actor->GetProperty()->SetOpacity(opacity);
-    return actor;
-}
-
-[[nodiscard]] vtkSmartPointer<vtkActor> makeDrrSourceActor(
-    const measurement::ProjectionParams& projection,
-    const std::array<double, 3>& color)
-{
-    vtkNew<vtkSphereSource> sphere;
-    // Scale the marker with SID so it remains visible for both compact synthetic
-    // phantoms and full-size CT volumes without becoming the dominant object.
-    sphere->SetRadius(std::clamp(projection.sidMm * 0.012, 4.0, 14.0));
-    sphere->SetThetaResolution(24);
-    sphere->SetPhiResolution(24);
-    sphere->SetCenter(
-        projection.sourcePosPatientMm.x,
-        projection.sourcePosPatientMm.y,
-        projection.sourcePosPatientMm.z);
-
-    vtkNew<vtkPolyDataMapper> mapper;
-    mapper->SetInputConnection(sphere->GetOutputPort());
-
-    vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
-    actor->SetMapper(mapper);
-    actor->GetProperty()->SetColor(color[0], color[1], color[2]);
-    actor->GetProperty()->SetSpecular(0.4);
-    actor->GetProperty()->SetSpecularPower(18.0);
-    return actor;
-}
-
-[[nodiscard]] vtkSmartPointer<vtkActor> makeDrrDetectorActor(
-    const measurement::ProjectionParams& projection,
-    const std::array<double, 3>& color)
-{
-    const double halfWidthMm = 0.5
-        * static_cast<double>(std::max(1, projection.detectorWidth))
-        * projection.pixelSpacingMm;
-    const double halfHeightMm = 0.5
-        * static_cast<double>(std::max(1, projection.detectorHeight))
-        * projection.pixelSpacingMm;
-    const measurement::Vec3d u = measurement::normalize(projection.detectorUPatientUnit);
-    const measurement::Vec3d v = measurement::normalize(projection.detectorVPatientUnit);
-    const measurement::Vec3d c = projection.detectorCenterPatientMm;
-
-    const measurement::Vec3d p0 = c - u * halfWidthMm - v * halfHeightMm;
-    const measurement::Vec3d p1 = c + u * halfWidthMm - v * halfHeightMm;
-    const measurement::Vec3d p2 = c - u * halfWidthMm + v * halfHeightMm;
-
-    vtkNew<vtkPlaneSource> plane;
-    plane->SetOrigin(p0.x, p0.y, p0.z);
-    plane->SetPoint1(p1.x, p1.y, p1.z);
-    plane->SetPoint2(p2.x, p2.y, p2.z);
-
-    vtkNew<vtkPolyDataMapper> mapper;
-    mapper->SetInputConnection(plane->GetOutputPort());
-
-    vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
-    actor->SetMapper(mapper);
-    actor->GetProperty()->SetColor(color[0], color[1], color[2]);
-    actor->GetProperty()->SetRepresentationToWireframe();
-    actor->GetProperty()->SetLineWidth(2.0);
-    actor->GetProperty()->SetOpacity(0.82);
     return actor;
 }
 
@@ -2590,111 +2278,6 @@ namespace {
         std::copy(values.data() + static_cast<size_t>(y * width), values.data() + static_cast<size_t>((y + 1) * width), target);
     }
     return vtkImage;
-}
-
-[[nodiscard]] vtkSmartPointer<vtkActor> makeDrrTexturedDetectorActor(
-    const measurement::ProjectionParams& projection,
-    const QImage& image,
-    double opacity)
-{
-    vtkSmartPointer<vtkImageData> vtkImage = makeVtkRgbaImage(image);
-    if (vtkImage == nullptr) {
-        return nullptr;
-    }
-
-    const double halfWidthMm = 0.5
-        * static_cast<double>(std::max(1, projection.detectorWidth))
-        * projection.pixelSpacingMm;
-    const double halfHeightMm = 0.5
-        * static_cast<double>(std::max(1, projection.detectorHeight))
-        * projection.pixelSpacingMm;
-    const measurement::Vec3d u = measurement::normalize(projection.detectorUPatientUnit);
-    const measurement::Vec3d v = measurement::normalize(projection.detectorVPatientUnit);
-    const measurement::Vec3d c = projection.detectorCenterPatientMm;
-
-    const measurement::Vec3d p0 = c - u * halfWidthMm - v * halfHeightMm;
-    const measurement::Vec3d p1 = c + u * halfWidthMm - v * halfHeightMm;
-    const measurement::Vec3d p2 = c - u * halfWidthMm + v * halfHeightMm;
-
-    vtkNew<vtkPlaneSource> plane;
-    plane->SetOrigin(p0.x, p0.y, p0.z);
-    plane->SetPoint1(p1.x, p1.y, p1.z);
-    plane->SetPoint2(p2.x, p2.y, p2.z);
-
-    vtkNew<vtkPolyDataMapper> mapper;
-    mapper->SetInputConnection(plane->GetOutputPort());
-
-    vtkNew<vtkTexture> texture;
-    texture->SetInputData(vtkImage);
-    texture->InterpolateOn();
-
-    vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
-    actor->SetMapper(mapper);
-    actor->SetTexture(texture);
-    actor->GetProperty()->SetColor(1.0, 1.0, 1.0);
-    actor->GetProperty()->SetOpacity(opacity);
-    actor->GetProperty()->LightingOff();
-    return actor;
-}
-
-void addDrrProjectionActors(
-    vtkRenderer& renderer,
-    const measurement::ProjectionParams& projection,
-    const QImage& image,
-    bool lateral)
-{
-    const std::array<double, 3> sourceColor = lateral
-        ? std::array<double, 3>{1.0, 0.56, 0.20}
-        : std::array<double, 3>{1.0, 0.86, 0.18};
-    const std::array<double, 3> detectorColor = lateral
-        ? std::array<double, 3>{0.66, 0.58, 1.0}
-        : std::array<double, 3>{0.20, 0.72, 1.0};
-    const std::array<double, 3> rayColor = lateral
-        ? std::array<double, 3>{1.0, 0.44, 0.30}
-        : std::array<double, 3>{0.20, 1.0, 0.64};
-
-    if (!image.isNull()) {
-        vtkSmartPointer<vtkActor> texturedDetector = makeDrrTexturedDetectorActor(projection, image, 0.72);
-        if (texturedDetector != nullptr) {
-            renderer.AddActor(texturedDetector);
-        }
-    }
-    renderer.AddActor(makeDrrSourceActor(projection, sourceColor));
-    renderer.AddActor(makeDrrDetectorActor(projection, detectorColor));
-
-    const double halfWidthMm = 0.5
-        * static_cast<double>(std::max(1, projection.detectorWidth))
-        * projection.pixelSpacingMm;
-    const double halfHeightMm = 0.5
-        * static_cast<double>(std::max(1, projection.detectorHeight))
-        * projection.pixelSpacingMm;
-    const measurement::Vec3d u = measurement::normalize(projection.detectorUPatientUnit);
-    const measurement::Vec3d v = measurement::normalize(projection.detectorVPatientUnit);
-
-    const auto detectorPoint = [&](double su, double sv) {
-        return projection.detectorCenterPatientMm + u * (su * halfWidthMm) + v * (sv * halfHeightMm);
-    };
-
-    // Match the reference xray viewport: center ray plus a few detector edge samples
-    // make the simulated C-arm pose readable without drawing every detector pixel ray.
-    const std::array<std::pair<double, double>, 7> samples{{
-        {-1.0, 0.0},
-        {-0.5, 0.0},
-        {0.0, 0.0},
-        {0.5, 0.0},
-        {1.0, 0.0},
-        {0.0, -1.0},
-        {0.0, 1.0},
-    }};
-    for (size_t index = 0; index < samples.size(); ++index) {
-        const measurement::Vec3d target = detectorPoint(samples[index].first, samples[index].second);
-        renderer.AddActor(makeLineActor(
-            projection.sourcePosPatientMm,
-            target,
-            rayColor,
-            index == 2 ? 2.6 : 1.2,
-            index == 2 ? 0.9 : 0.46));
-    }
 }
 
 [[nodiscard]] std::optional<DrrDetectorLine> clipDetectorLineToBounds(
@@ -2808,86 +2391,6 @@ void addDrrProjectionActors(
         detectorDirection,
         targetProjection.detectorWidth,
         targetProjection.detectorHeight);
-}
-
-}  // namespace
-
-void PlanSceneWidget::refreshScene()
-{
-    rebuildScene();
-}
-
-void PlanSceneWidget::rebuildScene()
-{
-    if (m_impl->renderer == nullptr || m_impl->renderWindow == nullptr) {
-        return;
-    }
-
-    const std::string signature = volumeSignature();
-    const bool volumeChanged = signature != m_impl->lastVolumeSignature;
-    if (volumeChanged) {
-        m_impl->lastVolumeSignature = signature;
-        m_impl->volumeImage = m_volume != nullptr && m_volume->image
-            ? makePatientVolumeImageData(*m_volume)
-            : nullptr;
-        m_impl->cameraInitialized = false;
-    }
-
-    m_impl->renderer->RemoveAllViewProps();
-
-    std::array<double, 6> bounds{-80.0, 80.0, -80.0, 80.0, -80.0, 80.0};
-    if (m_volume != nullptr && m_volume->image) {
-        bounds = volumePatientBounds(*m_volume);
-        vtkNew<vtkCubeSource> source;
-        source->SetBounds(bounds.data());
-
-        vtkNew<vtkPolyDataMapper> mapper;
-        mapper->SetInputConnection(source->GetOutputPort());
-
-        vtkNew<vtkActor> outline;
-        outline->SetMapper(mapper);
-        outline->GetProperty()->SetRepresentationToWireframe();
-        outline->GetProperty()->SetColor(0.58, 0.64, 0.72);
-        outline->GetProperty()->SetOpacity(0.45);
-        outline->GetProperty()->SetLineWidth(1.0);
-        m_impl->renderer->AddActor(outline);
-    }
-
-    if (m_impl->volumeImage != nullptr) {
-        vtkSmartPointer<vtkVolume> medicalVolume = makeMedicalVolumeActor(m_impl->volumeImage);
-        if (medicalVolume != nullptr) {
-            m_impl->renderer->AddVolume(medicalVolume);
-        }
-    }
-
-    if (m_plan != nullptr) {
-        InstrumentRenderModelBuilder builder;
-        const std::vector<InstrumentRenderMeshSegment> meshes =
-            builder.buildVisibleMeshSegments(*m_plan, m_selectedInstrumentId, 32);
-        for (const InstrumentRenderMeshSegment& mesh : meshes) {
-            m_impl->renderer->AddActor(makeInstrumentActor(mesh));
-        }
-    }
-
-    for (size_t index = 0; index < m_drrProjections.size(); ++index) {
-        if (m_drrProjectionEnabled[index]) {
-            addDrrProjectionActors(*m_impl->renderer, m_drrProjections[index], m_drrImages[index], index == 1);
-        }
-    }
-
-    if (!m_impl->cameraInitialized) {
-        m_impl->renderer->ResetCamera();
-        vtkCamera* camera = m_impl->renderer->GetActiveCamera();
-        if (camera != nullptr) {
-            camera->Azimuth(35.0);
-            camera->Elevation(22.0);
-            camera->Dolly(1.2);
-            m_impl->renderer->ResetCameraClippingRange();
-        }
-        m_impl->cameraInitialized = true;
-    }
-
-    m_impl->renderWindow->Render();
 }
 
 class XrayDisplayWidget final : public QWidget {
@@ -3786,7 +3289,7 @@ MprPlanVerificationWindow::MprPlanVerificationWindow(QWidget* parent)
 
 void MprPlanVerificationWindow::buildUi()
 {
-    setWindowTitle("Interactive MPR Test");
+    setWindowTitle("MPR Plan Verification");
 
     auto* central = new QWidget(this);
     central->setObjectName("AppRoot");
@@ -3987,7 +3490,7 @@ void MprPlanVerificationWindow::buildUi()
     m_statusLabel->setWordWrap(true);
     statusLayout->addWidget(m_statusLabel);
     drrPanelLayout->addWidget(statusGroup);
-    auto* drrGroup = new QGroupBox("DRR 参数", drrPanel);
+    auto* drrGroup = new QGroupBox("DRR 鍙傛暟", drrPanel);
     auto* drrGroupLayout = new QVBoxLayout(drrGroup);
     drrGroup->setTitle("DRR Parameters");
     drrGroupLayout->setContentsMargins(9, 9, 9, 9);
@@ -4296,12 +3799,6 @@ void MprPlanVerificationWindow::loadStartupVolume()
 void MprPlanVerificationWindow::loadDicomFolder()
 {
     QString initialDirectory = QString::fromStdString(m_volume.sourceFolder);
-    if (!QFileInfo(initialDirectory).isDir()) {
-        const QString validatedDirectory = QString::fromUtf8(kValidatedDicomFolder);
-        initialDirectory = QFileInfo(validatedDirectory).isDir()
-            ? validatedDirectory
-            : QString::fromUtf8(kDefaultDicomFolder);
-    }
     if (!QFileInfo(initialDirectory).isDir()) {
         initialDirectory = QDir::homePath();
     }
@@ -5579,21 +5076,6 @@ void MprPlanVerificationWindow::addInstrument(measurement::InstrumentType type)
     refreshAll(true);
 }
 
-void MprPlanVerificationWindow::applyInstrumentEdits()
-{
-    const std::string id = selectedInstrumentId();
-    if (id.empty()) {
-        return;
-    }
-    const auto result = m_planController->updateInstrument(id, patchFromControls());
-    if (!result.ok()) {
-        statusBar()->showMessage(QString::fromStdString(result.error().message + ": " + result.error().detail), 6000);
-        syncSpinBoxesFromSelectedInstrument();
-        return;
-    }
-    refreshAll(true);
-}
-
 void MprPlanVerificationWindow::applyInstrumentPropertyEdits()
 {
     if (m_syncingControls || !m_instrumentEditActive) {
@@ -5624,42 +5106,6 @@ void MprPlanVerificationWindow::removeSelectedInstrument()
     const auto result = m_planController->removeInstrument(id);
     if (!result.ok()) {
         statusBar()->showMessage(QString::fromStdString(result.error().message), 6000);
-        return;
-    }
-    refreshAll(true);
-}
-
-void MprPlanVerificationWindow::setSelectedVisible(bool visible)
-{
-    if (m_syncingControls) {
-        return;
-    }
-    const std::string id = selectedInstrumentId();
-    if (id.empty()) {
-        return;
-    }
-    const auto result = m_planController->setInstrumentVisible(id, visible);
-    if (!result.ok()) {
-        statusBar()->showMessage(QString::fromStdString(result.error().message), 6000);
-    }
-    refreshAll(true);
-}
-
-void MprPlanVerificationWindow::setSelectedLocked(bool locked)
-{
-    if (m_syncingControls) {
-        return;
-    }
-    const std::string id = selectedInstrumentId();
-    if (id.empty()) {
-        return;
-    }
-    measurement::InstrumentPatch patch = patchFromControls();
-    patch.locked = locked;
-    const auto result = m_planController->updateInstrument(id, patch);
-    if (!result.ok()) {
-        statusBar()->showMessage(QString::fromStdString(result.error().message), 6000);
-        syncSpinBoxesFromSelectedInstrument();
         return;
     }
     refreshAll(true);
