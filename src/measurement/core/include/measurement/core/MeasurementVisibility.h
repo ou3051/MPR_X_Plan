@@ -21,5 +21,6 @@ void applyObliqueDirectionFilter(
     const MeasurementAnnotation& annotation,
     const MeasurementPlane& slice,
     MeasurementViewType currentViewType);
+[[nodiscard]] bool isMeasurementControlVisible(const MeasurementVisibilityResult& result);
 
 }  // namespace measurement::measurement_visibility
