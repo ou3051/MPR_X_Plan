@@ -396,7 +396,7 @@ void MprSliceWidget::drawMeasurementOverlays(QPainter& painter)
                 annotation,
                 *slice,
                 measurementViewTypeForPlane(m_plane));
-            if (result.level != measurement::MeasurementVisibilityLevel::Hidden) {
+            if (measurement::measurement_visibility::isMeasurementControlVisible(result)) {
                 drawMeasurementAnnotation(painter, result);
             }
         }
